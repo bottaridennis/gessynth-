@@ -8,22 +8,23 @@ Il deployment è automatico tramite **GitHub Actions** (`.github/workflows/deplo
 
 | Evento | Cosa succede |
 | :--- | :--- |
-| Push su `main` / `master` | lint → test → build → **deploy su Pages** |
+| Push su `main` / `master` | lint → test → build → **pubblicazione sul branch `gh-pages`** |
 | Pull request | lint → test → build (nessun deploy, solo verifica) |
 | *Run workflow* manuale | come un push |
 
-La pipeline usa **Node 22** e **Bun** (il lockfile del progetto è `bun.lock`), compila con
-`--base-href ./` così il sito funziona sotto `https://<utente>.github.io/<repo>/` qualunque sia il nome del repository,
-e verifica con `scripts/post-build-gh-pages.mjs` che `index.html`, il runtime WASM di MediaPipe,
-`.nojekyll` e `404.html` siano presenti nell'output.
+Il workflow **non usa nessuna action esterna** (`uses:`), solo comandi shell: funziona anche se in
+*Settings → Actions → General* sono consentite solo le actions di tua proprietà.
+Usa il Node preinstallato sul runner e **Bun** (il lockfile è `bun.lock`), compila con `--base-href ./`
+così il sito funziona sotto `https://<utente>.github.io/<repo>/`, e verifica con
+`scripts/post-build-gh-pages.mjs` che `index.html`, il runtime WASM di MediaPipe, `.nojekyll` e `404.html` siano presenti.
 
 ### Attivazione (una sola volta)
 
-1. Su GitHub apri **Settings → Pages**.
-2. In **Build and deployment → Source** seleziona **GitHub Actions** *(non "Deploy from a branch")*.
-3. Fai push su `main` (oppure **Actions → Deploy to GitHub Pages → Run workflow**).
-4. Dopo 1-2 minuti il sito è online su `https://<tuo-username>.github.io/<nome-repo>/`
-   (l'URL esatto compare anche nel job *deploy*).
+1. Fai push su `main` (oppure **Actions → Deploy to GitHub Pages → Run workflow**): la prima esecuzione crea il branch `gh-pages`.
+2. Su GitHub apri **Settings → Pages**.
+3. In **Build and deployment → Source** seleziona **Deploy from a branch**, poi branch **`gh-pages`** e cartella **`/ (root)`**, e salva.
+4. Dopo circa un minuto il sito è online su `https://<tuo-username>.github.io/<nome-repo>/`
+   (l'URL compare anche nel riepilogo della run).
 
 > **Nota webcam**: i browser concedono la videocamera (`getUserMedia`) solo in HTTPS; GitHub Pages è HTTPS di default.
 > Il runtime WASM di MediaPipe è incluso nel sito (cartella `mediapipe/wasm`), mentre il modello
