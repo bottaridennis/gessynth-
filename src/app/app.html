@@ -137,15 +137,16 @@
       <button
         type="button"
         (click)="toggleCameraMode()"
+        [disabled]="cameraStatus() === 'requesting'"
         class="border rounded-lg px-2 py-1 text-[11px] sm:text-xs font-mono font-medium flex items-center gap-1 cursor-pointer shadow-lg backdrop-blur-md transition-all shrink-0"
         [class]="cameraStatus() === 'active' ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-300' : 'bg-zinc-950/90 border-zinc-800/90 text-zinc-300 hover:text-amber-400 hover:border-zinc-700'"
-        [title]="cameraStatus() === 'active' ? 'Webcam active (click to use Virtual Simulator)' : 'Using Virtual Simulator (click for Webcam)'"
+        [title]="cameraStatus() === 'active' ? 'Webcam active (click to use Virtual Simulator)' : cameraStatus() === 'requesting' ? 'Starting webcam & hand tracking…' : 'Using Virtual Simulator (click for Webcam)'"
       >
         <mat-icon class="!text-xs sm:!text-sm !w-3.5 sm:!w-4 !h-3.5 sm:!h-4 leading-none">
           {{ cameraStatus() === 'active' ? 'videocam' : 'videocam_off' }}
         </mat-icon>
         <span class="hidden sm:inline">
-          {{ cameraStatus() === 'active' ? 'Cam' : 'Virtual' }}
+          {{ cameraStatus() === 'active' ? 'Cam' : cameraStatus() === 'requesting' ? 'Loading…' : 'Virtual' }}
         </span>
       </button>
 
@@ -167,7 +168,7 @@
   @if (soundRackOpen()) {
     <aside
       id="sound-rack-drawer"
-      class="absolute top-16 sm:top-14 right-2.5 z-40 bg-zinc-950/95 border border-zinc-800/90 rounded-2xl p-4 shadow-2xl backdrop-blur-xl w-[92vw] sm:w-84 max-h-[84vh] overflow-y-auto"
+      class="absolute top-24 right-2.5 z-40 bg-zinc-950/95 border border-zinc-800/90 rounded-2xl p-4 shadow-2xl backdrop-blur-xl w-[92vw] sm:w-84 max-h-[calc(100dvh-7rem)] overflow-y-auto"
       role="region"
       aria-labelledby="rack-heading"
     >
@@ -364,7 +365,7 @@
   @if (guideVisible()) {
     <aside
       id="gesture-guide"
-      class="absolute top-26 sm:top-14 left-2 sm:left-2.5 z-10 flex flex-row overflow-x-auto gap-2 max-w-[calc(100vw-16px)] pointer-events-none pb-1"
+      class="absolute top-24 left-2 sm:left-2.5 z-10 flex flex-row overflow-x-auto gap-2 max-w-[calc(100vw-16px)] pointer-events-none pb-1"
       aria-label="Gesture reference guide"
     >
       <!-- LEFT HAND PANEL (Degrees I to VII with dynamic notes) -->
@@ -474,7 +475,7 @@
 
   <!-- RIGHT SIDE: VOLUME METER & FILTER READOUT (shown when synth rack is closed) -->
   @if (!soundRackOpen()) {
-    <aside class="absolute top-24 sm:top-14 right-3 z-10 flex flex-col items-end gap-2.5 pointer-events-none" aria-label="Audio meters">
+    <aside class="absolute top-24 right-3 z-10 flex flex-col items-end gap-2.5 pointer-events-none" aria-label="Audio meters">
       <!-- Volume LED Meter (8 Segments) -->
       <div class="bg-zinc-950/85 border border-zinc-800/90 rounded-xl p-2 flex flex-col items-center gap-1 backdrop-blur-md shadow-xl pointer-events-auto">
         <div class="text-[9px] font-bold text-zinc-400 tracking-wider">VOL</div>
@@ -490,13 +491,13 @@
       </div>
 
       <!-- Filter Frequency Indicator -->
-      <div class="bg-zinc-950/85 border border-zinc-800/90 rounded-xl px-2.5 py-1.5 text-right backdrop-blur-md shadow-xl pointer-events-auto">
+      <div class="hidden sm:block bg-zinc-950/85 border border-zinc-800/90 rounded-xl px-2.5 py-1.5 text-right backdrop-blur-md shadow-xl pointer-events-auto">
         <div class="text-[9px] text-zinc-400 tracking-wider uppercase">FILTER CUTOFF</div>
         <div class="text-xs font-bold text-amber-400 font-mono">{{ currentFilterFreq() }} Hz</div>
       </div>
 
       <!-- Scale Mode Pill -->
-      <div class="bg-zinc-950/85 border border-zinc-800/90 rounded-xl px-2.5 py-1 text-right backdrop-blur-md shadow-xl pointer-events-auto">
+      <div class="hidden sm:block bg-zinc-950/85 border border-zinc-800/90 rounded-xl px-2.5 py-1 text-right backdrop-blur-md shadow-xl pointer-events-auto">
         <div class="text-[9px] text-zinc-400 uppercase tracking-wider">SCALE</div>
         <div class="text-xs font-semibold text-zinc-200 capitalize">{{ selectedScaleMode() }}</div>
       </div>
@@ -506,7 +507,7 @@
   <!-- CENTER CHORD DISPLAY BADGE & SOUND REACTION -->
   <section
     class="absolute left-0 right-0 z-10 flex flex-col items-center justify-center pointer-events-none px-4 transition-all duration-200"
-    [class]="started() && keyboardBarVisible() ? 'bottom-26 sm:bottom-32' : 'bottom-6 sm:bottom-8'"
+    [class]="started() && keyboardBarVisible() ? 'bottom-48 sm:bottom-40' : 'bottom-6 sm:bottom-8'"
   >
     @if (cameraStatus() === 'active' && !handsDetected()) {
       <!-- Silent / Waiting for Hands Badge -->
@@ -950,6 +951,22 @@
           </button>
         </div>
       </div>
+    </div>
+  }
+  <!-- Camera / hand-tracking error notice -->
+  @if (started() && (cameraStatus() === 'denied' || cameraStatus() === 'unsupported')) {
+    <div
+      class="absolute top-24 left-1/2 -translate-x-1/2 z-40 max-w-sm w-[calc(100%-2rem)] bg-rose-950/90 border border-rose-500/50 text-rose-200 text-[11px] rounded-lg px-3 py-2 shadow-lg backdrop-blur-md flex items-start gap-2"
+      role="status"
+    >
+      <span class="flex-1">
+        @if (cameraStatus() === 'denied') {
+          Webcam not available or permission denied. Using the Virtual Simulator (keyboard &amp; mouse).
+        } @else {
+          Hand tracking could not be loaded (network or browser not supported). Using the Virtual Simulator.
+        }
+      </span>
+      <button type="button" class="text-rose-300 hover:text-white cursor-pointer" (click)="dismissCameraNotice()" aria-label="Dismiss notice">✕</button>
     </div>
   }
 </main>

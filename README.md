@@ -4,37 +4,48 @@ Sintetizzatore polifonico interattivo controllato da gesti delle mani via webcam
 
 ## 🚀 Pubblicazione su GitHub Pages
 
-Questo repository è già configurato al 100% per il deployment automatico su **GitHub Pages** tramite **GitHub Actions** (`.github/workflows/deploy.yml`).
+Il deployment è automatico tramite **GitHub Actions** (`.github/workflows/deploy.yml`):
 
-### Come attivare GitHub Pages sul tuo repository GitHub:
+| Evento | Cosa succede |
+| :--- | :--- |
+| Push su `main` / `master` | lint → test → build → **deploy su Pages** |
+| Pull request | lint → test → build (nessun deploy, solo verifica) |
+| *Run workflow* manuale | come un push |
 
-1. Fai il push di questo progetto sul tuo repository GitHub (ramo `main` o `master`).
-2. Vai su **Settings** del tuo repository su GitHub.
-3. Nella barra laterale sinistra, clicca su **Pages** (sotto la sezione *Code and automation*).
-4. Sotto **Build and deployment** -> **Source**, seleziona:
-   👉 **GitHub Actions** *(invece di "Deploy from a branch")*.
-5. Fai un commit o lancia manualmente la workflow da **Actions** -> **Deploy to GitHub Pages** -> **Run workflow**.
-6. In circa 1-2 minuti, la Action completerà i test e la build, e il tuo sito sarà online all'indirizzo:
-   `https://<tuo-username>.github.io/<nome-repo>/`
+La pipeline usa **Node 22** e **Bun** (il lockfile del progetto è `bun.lock`), compila con
+`--base-href ./` così il sito funziona sotto `https://<utente>.github.io/<repo>/` qualunque sia il nome del repository,
+e verifica con `scripts/post-build-gh-pages.mjs` che `index.html`, il runtime WASM di MediaPipe,
+`.nojekyll` e `404.html` siano presenti nell'output.
 
-> **Nota WebCam**: I browser richiedono HTTPS per accedere alla videocamera (`navigator.mediaDevices.getUserMedia`), e GitHub Pages include HTTPS di default!
+### Attivazione (una sola volta)
+
+1. Su GitHub apri **Settings → Pages**.
+2. In **Build and deployment → Source** seleziona **GitHub Actions** *(non "Deploy from a branch")*.
+3. Fai push su `main` (oppure **Actions → Deploy to GitHub Pages → Run workflow**).
+4. Dopo 1-2 minuti il sito è online su `https://<tuo-username>.github.io/<nome-repo>/`
+   (l'URL esatto compare anche nel job *deploy*).
+
+> **Nota webcam**: i browser concedono la videocamera (`getUserMedia`) solo in HTTPS; GitHub Pages è HTTPS di default.
+> Il runtime WASM di MediaPipe è incluso nel sito (cartella `mediapipe/wasm`), mentre il modello
+> `hand_landmarker.task` viene scaricato da `storage.googleapis.com` al primo avvio della camera.
 
 ---
 
 ## 🛠️ Comandi disponibili
 
 ```bash
-# Installa le dipendenze
-npm install
+# Installa le dipendenze (consigliato Bun, che rispetta bun.lock)
+bun install          # oppure: npm install
 
-# Avvia il server di sviluppo locale
-npm run dev
+# Avvia il server di sviluppo locale (http://localhost:3000)
+bun run dev
 
-# Esegui i test unitari
-npm test -- --watch=false
+# Lint e test unitari
+bun run lint
+bun run test -- --watch=false
 
-# Esegui la build ottimizzata per GitHub Pages
-npm run build:gh-pages
+# Build ottimizzata per GitHub Pages (output in dist/app/browser)
+bun run build:gh-pages
 ```
 
 ---
@@ -62,5 +73,10 @@ npm run build:gh-pages
 | **Mute / Choke** | ✊ **Mano chiusa** | **Mute / Stop** |
 | **Altezza mano** | ↕️ Asse verticale | Controllo volume dinamico |
 | **Pollice esteso** | 👍 Pollice in fuori | Spostamento ottava |
+
+### Tastiera (modalità virtuale)
+
+`1`–`7` gradi · `M` maggiore/minore · `Q W E R` voicing · `Z X C` ottava · `↑ ↓` volume · `← →` filtro ·
+`Spazio` mute · `0` / `Backspace` / `Esc` stop (Esc chiude prima eventuali finestre aperte) · `K` barra tasti · `S` synth rack.
 
 È inoltre disponibile la modalità virtuale interattiva con barra dei tasti integrata `[K]`, synth shaping rack `[S]`, 14 preset timbrici e 10 scale musicali.

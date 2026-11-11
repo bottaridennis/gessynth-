@@ -238,6 +238,9 @@ export class AudioEngine {
   private feedbackLeft: GainNode | null = null;
   private feedbackRight: GainNode | null = null;
   private saturator: WaveShaperNode | null = null;
+  private saturatorRight: WaveShaperNode | null = null;
+  private pannerLeft: StereoPannerNode | null = null;
+  private pannerRight: StereoPannerNode | null = null;
 
   // Polyphony management
   private activeVoices: ActiveVoice[] = [];
@@ -256,7 +259,8 @@ export class AudioEngine {
   async init(): Promise<void> {
     if (typeof window === 'undefined') return;
     if (this.ctx) {
-      if (this.ctx.state === 'suspended') {
+      // 'suspended' (autoplay policy) or 'interrupted' (iOS Safari) both need a resume
+      if (this.ctx.state !== 'running' && this.ctx.state !== 'closed') {
         await this.ctx.resume();
       }
       return;
@@ -334,6 +338,17 @@ export class AudioEngine {
     this.saturator = this.ctx.createWaveShaper();
     this.saturator.curve = createSoftClipCurve(512) as Float32Array<ArrayBuffer>;
     this.saturator.oversample = 'none';
+    this.saturatorRight = this.ctx.createWaveShaper();
+    this.saturatorRight.curve = createSoftClipCurve(512) as Float32Array<ArrayBuffer>;
+    this.saturatorRight.oversample = 'none';
+
+    // True stereo ping-pong: left taps panned left, right taps panned right
+    this.pannerLeft = this.ctx.createStereoPanner();
+    this.pannerLeft.pan.setValueAtTime(-0.7, now);
+    this.pannerRight = this.ctx.createStereoPanner();
+    this.pannerRight.pan.setValueAtTime(0.7, now);
+    this.pannerLeft.connect(this.wetGain);
+    this.pannerRight.connect(this.wetGain);
 
     // Route Delay Network:
     // Input sends to DelayLeft & DelayRight
@@ -344,7 +359,7 @@ export class AudioEngine {
     this.delayLeft.connect(this.dampFilterLeft);
     this.dampFilterLeft.connect(this.highpassLeft);
     this.highpassLeft.connect(this.saturator);
-    this.highpassLeft.connect(this.wetGain);
+    this.highpassLeft.connect(this.pannerLeft);
 
     this.saturator.connect(this.feedbackLeft);
     this.feedbackLeft.connect(this.delayRight); // Cross ping-pong to Right
@@ -352,9 +367,12 @@ export class AudioEngine {
     // DelayRight -> damp -> highpass -> saturator -> wetGain & feedback to DelayLeft
     this.delayRight.connect(this.dampFilterRight);
     this.dampFilterRight.connect(this.highpassRight);
-    this.highpassRight.connect(this.wetGain);
+    this.highpassRight.connect(this.saturatorRight);
+    this.highpassRight.connect(this.pannerRight);
 
-    this.saturator.connect(this.feedbackRight);
+    // Each channel feeds back through its own saturator (previously the right
+    // channel had no feedback path and the left saturator fed both sides)
+    this.saturatorRight.connect(this.feedbackRight);
     this.feedbackRight.connect(this.delayLeft); // Cross ping-pong to Left
 
     // 4. Master Gain & Brickwall Limiter
@@ -382,7 +400,7 @@ export class AudioEngine {
     this.masterLimiter.connect(this.analyser);
     this.analyser.connect(this.ctx.destination);
 
-    if (this.ctx.state === 'suspended') {
+    if (this.ctx.state !== 'running') {
       await this.ctx.resume();
     }
   }
@@ -397,11 +415,7 @@ export class AudioEngine {
     this.applyParamsToGraph();
 
     // Retrigger with new timbre if voices are currently playing
-    if (this.currentNotesKey && this.activeVoices.length > 0) {
-      const frequencies = this.currentNotesKey.split(',').map(Number);
-      this.stopVoices(true);
-      this.playFrequencies(frequencies);
-    }
+    this.retriggerActiveVoices();
   }
 
   getPreset(): InstrumentPreset {
@@ -413,8 +427,26 @@ export class AudioEngine {
   }
 
   updateCustomParams(params: Partial<SoundCustomParams>): void {
+    const prev = this.customParams;
     this.customParams = { ...this.customParams, ...params };
     this.applyParamsToGraph();
+
+    // Oscillator-level params are baked into each voice: retrigger so the change is audible
+    const timbreChanged =
+      prev.waveform !== this.customParams.waveform ||
+      prev.subOsc !== this.customParams.subOsc ||
+      prev.detune !== this.customParams.detune;
+    if (timbreChanged) {
+      this.retriggerActiveVoices();
+    }
+  }
+
+  private retriggerActiveVoices(): void {
+    if (this.currentNotesKey && this.activeVoices.length > 0) {
+      const frequencies = this.currentNotesKey.split(',').map(Number);
+      this.stopVoices(false);
+      this.playFrequencies(frequencies);
+    }
   }
 
   resetCustomParamsToPreset(): void {
@@ -426,19 +458,9 @@ export class AudioEngine {
     if (!this.ctx) return;
     const now = this.ctx.currentTime;
 
-    const safeCutoff = Math.max(120, Math.min(10000, this.customParams.cutoff));
-    const safeResonance = Math.max(0.4, Math.min(3.8, this.customParams.resonance));
-
-    if (this.filter) {
-      this.filter.frequency.setTargetAtTime(safeCutoff, now, 0.03);
-      this.filter.Q.setTargetAtTime(safeResonance, now, 0.03);
-    }
-
-    if (this.filterCompGain) {
-      // Compensate for high Q peak energy
-      const comp = 1.0 / (1.0 + 0.2 * Math.max(0, safeResonance - 0.7));
-      this.filterCompGain.gain.setTargetAtTime(comp, now, 0.03);
-    }
+    // Re-apply the live gesture filter sweep scaled by the new base cutoff/resonance
+    // (setting the raw cutoff here would discard the current sweep position).
+    this.updateFilter(this.currentFilterFreq, this.currentFilterQ);
 
     const reverbAmt = Math.min(0.65, Math.max(0, this.customParams.reverb));
     if (this.dryGain && this.wetGain && this.spaceSendGain) {
@@ -912,7 +934,8 @@ export class AudioEngine {
       this.feedbackRight.gain.setValueAtTime(0, now);
 
       // Restore safe feedback after delay lines have emptied (350ms)
-      const targetFeedback = Math.min(0.32, this.customParams.reverb * 0.45);
+      const reverbAmt = Math.min(0.65, Math.max(0, this.customParams.reverb));
+      const targetFeedback = Math.min(0.32, reverbAmt * 0.45);
       this.feedbackLeft.gain.setValueAtTime(targetFeedback, now + 0.35);
       this.feedbackRight.gain.setValueAtTime(targetFeedback, now + 0.35);
     }

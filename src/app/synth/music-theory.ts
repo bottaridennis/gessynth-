@@ -132,8 +132,11 @@ export interface ChordTones {
   dim5Tone: number;
 }
 
-// Chromatic pitch classes starting from C
-const CHROMATIC_NOTES = ['C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B'];
+// Pitch-class names starting from C
+const SHARP_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+const FLAT_NAMES = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+const LETTERS = ['C', 'D', 'E', 'F', 'G', 'A', 'B'];
+const LETTER_PC: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 
 const KEY_SEMITONE_OFFSET: Record<KeySignature, number> = {
   C: 0,
@@ -172,9 +175,30 @@ export const KEY_BASE_FREQUENCIES: Record<KeySignature, number> = {
 export function getScaleNotes(key: KeySignature, mode: ScaleMode = 'major'): string[] {
   const rootIndex = KEY_SEMITONE_OFFSET[key] ?? 0;
   const modeInfo = SCALE_MODES.find((m) => m.id === mode) || SCALE_MODES[0];
-  return modeInfo.intervals.slice(0, 7).map((semitone) => {
-    const noteIdx = (rootIndex + semitone) % 12;
-    return CHROMATIC_NOTES[noteIdx];
+  const intervals = modeInfo.intervals.slice(0, 7);
+  const isHeptatonic = intervals.every((v, i) => i === 0 || (v > intervals[i - 1] && v < 12));
+
+  // Fallback spelling: sharps for sharp keys, flats otherwise
+  const fallback = (semitone: number) => {
+    const pc = (rootIndex + semitone) % 12;
+    return key.length === 1 && key !== 'F' ? SHARP_NAMES[pc] : FLAT_NAMES[pc];
+  };
+
+  if (!isHeptatonic) {
+    return intervals.map(fallback);
+  }
+
+  // Heptatonic scales: one letter per degree (A major -> G#, not Ab)
+  const rootLetterIdx = LETTERS.indexOf(key[0]);
+  return intervals.map((semitone, degree) => {
+    const letter = LETTERS[(rootLetterIdx + degree) % 7];
+    const targetPc = (rootIndex + semitone) % 12;
+    let diff = (targetPc - LETTER_PC[letter] + 12) % 12;
+    if (diff > 6) diff -= 12;
+    if (diff === 0) return letter;
+    if (diff === 1) return `${letter}#`;
+    if (diff === -1) return `${letter}b`;
+    return fallback(semitone); // avoid double accidentals
   });
 }
 
@@ -359,10 +383,15 @@ export function getChordDisplayName(
   const scale = getScaleNotes(key, mode);
   let noteName = scale[degreeIndex - 1] || 'C';
 
-  if (semitoneShift === 'raise') {
-    noteName += '#';
-  } else if (semitoneShift === 'lower') {
-    noteName += 'b';
+  // Shift on the chromatic circle instead of appending accidentals
+  // (avoids names like "C#b" or "Bb#")
+  if (semitoneShift !== 'off') {
+    const sharpIdx = SHARP_NAMES.indexOf(noteName);
+    const idx = sharpIdx >= 0 ? sharpIdx : FLAT_NAMES.indexOf(noteName);
+    if (idx >= 0) {
+      const raise = semitoneShift === 'raise';
+      noteName = (raise ? SHARP_NAMES : FLAT_NAMES)[(idx + (raise ? 1 : -1) + 12) % 12];
+    }
   }
 
   const baseName = isMajor ? noteName : `${noteName}m`;
