@@ -8,6 +8,7 @@ export interface TutorialStep {
   targetDegree: string; // "I", "IV", etc.
   targetMajor: boolean;
   targetVoicing?: number; // 1, 2, 3, 4
+  targetVoicings?: number[]; // alternative accepted voicings (overrides targetVoicing)
   theory: string;
 }
 
@@ -64,6 +65,7 @@ export const TUTORIAL_STEPS: TutorialStep[] = [
     targetDegree: 'I',
     targetMajor: true,
     targetVoicing: 3,
+    targetVoicings: [3, 4],
     theory: 'Extensions give chords colorful richness used in jazz, neo-soul, lo-fi, and cinema.',
   },
 ];

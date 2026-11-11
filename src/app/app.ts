@@ -143,7 +143,8 @@ export class App implements OnInit, OnDestroy {
     if (!deg) return false;
     const degreeMatches = deg.toUpperCase() === step.targetDegree.toUpperCase();
     const majorMatches = maj === step.targetMajor;
-    const voicingMatches = step.targetVoicing ? v === step.targetVoicing : true;
+    const allowed = step.targetVoicings ?? (step.targetVoicing ? [step.targetVoicing] : null);
+    const voicingMatches = allowed ? allowed.includes(v) : true;
 
     return degreeMatches && majorMatches && voicingMatches;
   });
@@ -249,12 +250,16 @@ export class App implements OnInit, OnDestroy {
     const mediaPipeReady = await this.handTracker.loadMediaPipe();
 
     if (this.webcamVideoRef?.nativeElement) {
-      const cameraSuccess = await this.handTracker.startCamera(this.webcamVideoRef.nativeElement);
-      if (cameraSuccess && mediaPipeReady) {
+      const cameraSuccess = mediaPipeReady
+        ? await this.handTracker.startCamera(this.webcamVideoRef.nativeElement)
+        : false;
+      if (cameraSuccess) {
         this.cameraStatus.set('active');
         this.isVirtualMode.set(false);
       } else {
-        this.cameraStatus.set(cameraSuccess ? 'active' : 'denied');
+        // Without hand tracking the camera is useless: fall back to virtual mode.
+        // (Leaving the camera "active" would make the render loop silence every chord.)
+        this.cameraStatus.set(mediaPipeReady ? 'denied' : 'unsupported');
         this.isVirtualMode.set(true);
         this.activeDegree.set('I');
         this.triggerCurrentChord();
@@ -283,21 +288,25 @@ export class App implements OnInit, OnDestroy {
       this.activeDegree.set(null);
       this.handsDetected.set(false);
       this.cameraStatus.set('requesting');
-      await this.handTracker.loadMediaPipe();
-      if (this.webcamVideoRef?.nativeElement) {
-        const ok = await this.handTracker.startCamera(this.webcamVideoRef.nativeElement);
-        if (ok) {
-          this.cameraStatus.set('active');
-          this.isVirtualMode.set(false);
-          this.handsDetected.set(false);
-        } else {
-          this.cameraStatus.set('denied');
-          this.isVirtualMode.set(true);
-          this.activeDegree.set('I');
-          this.triggerCurrentChord();
-        }
+      const mediaPipeReady = await this.handTracker.loadMediaPipe();
+      const video = this.webcamVideoRef?.nativeElement;
+      const ok = mediaPipeReady && video ? await this.handTracker.startCamera(video) : false;
+      if (ok) {
+        this.cameraStatus.set('active');
+        this.isVirtualMode.set(false);
+        this.handsDetected.set(false);
+        this.debouncer.reset();
+      } else {
+        this.cameraStatus.set(mediaPipeReady ? 'denied' : 'unsupported');
+        this.isVirtualMode.set(true);
+        this.activeDegree.set('I');
+        this.triggerCurrentChord();
       }
     }
+  }
+
+  dismissCameraNotice(): void {
+    this.cameraStatus.set('idle');
   }
 
   async unlockAudio(): Promise<void> {
@@ -452,12 +461,30 @@ export class App implements OnInit, OnDestroy {
 
   handleKeyDown(event: KeyboardEvent): void {
     if (!this.started()) return;
+    // Don't hijack browser shortcuts (Ctrl+C, Cmd+R, ...) or auto-repeat
+    if (event.ctrlKey || event.metaKey || event.altKey || event.repeat) return;
     const key = event.key.toLowerCase();
+
+    // Escape closes any open overlay before acting as "stop sound"
+    if (key === 'escape' && (this.helpOpen() || this.tutorialOpen() || this.soundRackOpen())) {
+      event.preventDefault();
+      this.helpOpen.set(false);
+      this.tutorialOpen.set(false);
+      this.soundRackOpen.set(false);
+      return;
+    }
+
+    // Let form controls (selects, sliders, buttons) keep their native keyboard behaviour
+    const target = event.target as HTMLElement | null;
+    const tag = target?.tagName;
+    if (tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) {
+      return;
+    }
+    if (key === ' ' && tag === 'BUTTON') return;
 
     // Auto-resume audio if needed on key press
     if (!this.audioUnlocked()) {
-      this.audioEngine.init();
-      this.audioUnlocked.set(true);
+      void this.unlockAudio();
     }
 
     // Numbers 1-7: Degrees
@@ -495,6 +522,7 @@ export class App implements OnInit, OnDestroy {
       this.setVirtualFilter(Math.min(1.0, this.tiltValue() + 0.2));
     } else if (key === 'arrowleft') {
       event.preventDefault();
+      this.setVirtualFilter(Math.max(-1.0, this.tiltValue() - 0.2));
     } else if (key === '0' || key === 'escape' || key === 'backspace') {
       event.preventDefault();
       this.stopVirtualSound();

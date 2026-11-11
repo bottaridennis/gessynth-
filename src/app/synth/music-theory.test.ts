@@ -70,10 +70,10 @@ test('ScaleMode and getScaleNotes produce correct modal notes', () => {
   // A Natural Minor (Aeolian): A, B, C, D, E, F, G
   assert.deepEqual(getScaleNotes('A', 'minor'), ['A', 'B', 'C', 'D', 'E', 'F', 'G']);
 
-  // A Harmonic Minor (raised 7th): A, B, C, D, E, F, Ab/G#
+  // A Harmonic Minor (raised 7th): A, B, C, D, E, F, G#
   const aHarmonic = getScaleNotes('A', 'harmonic_minor');
   assert.equal(aHarmonic[0], 'A');
-  assert.equal(aHarmonic[6], 'Ab'); // enharmonic G#
+  assert.equal(aHarmonic[6], 'G#');
 
   // C Pentatonic Major: C, D, E, G, A
   const cPent = getScaleNotes('C', 'pentatonic_major');
@@ -101,3 +101,18 @@ test('calculateDegreeFrequency honors ScaleMode intervals', () => {
   assert.equal(Math.round(minorThird), Math.round(cFreq * Math.pow(2, 3 / 12)));
 });
 
+
+test('getChordDisplayName applies semitone shift chromatically', () => {
+  // A major, degree III = C#; raising gives D, lowering gives C
+  assert.equal(getChordDisplayName('III', true, 'A', 1, 'raise'), 'D');
+  assert.equal(getChordDisplayName('III', true, 'A', 1, 'lower'), 'C');
+  // Wrap-around: B raised -> C
+  assert.equal(getChordDisplayName('I', false, 'B', 1, 'raise'), 'Cm');
+});
+
+test('getScaleNotes uses correct enharmonic spelling', () => {
+  assert.deepEqual(getScaleNotes('A', 'major'), ['A', 'B', 'C#', 'D', 'E', 'F#', 'G#']);
+  assert.deepEqual(getScaleNotes('Gb', 'major'), ['Gb', 'Ab', 'Bb', 'Cb', 'Db', 'Eb', 'F']);
+  assert.deepEqual(getScaleNotes('C', 'minor'), ['C', 'D', 'Eb', 'F', 'G', 'Ab', 'Bb']);
+  assert.deepEqual(getScaleNotes('A', 'harmonic_minor'), ['A', 'B', 'C', 'D', 'E', 'F', 'G#']);
+});
