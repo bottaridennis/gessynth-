@@ -1,0 +1,955 @@
+<main class="relative w-screen h-screen overflow-hidden bg-[#0c0c0f] text-[#f4f4f5] select-none font-mono">
+  <!-- Video element for MediaPipe (invisible in DOM, rendered via canvas) -->
+  <video
+    #webcamVideo
+    class="absolute top-0 left-0 w-1 h-1 opacity-0 pointer-events-none -z-50"
+    playsinline
+    muted
+    autoplay
+    aria-hidden="true"
+  ></video>
+
+  <!-- Canvas rendering camera background, hand skeleton & reactive waveforms -->
+  <canvas
+    #overlayCanvas
+    class="absolute inset-0 w-full h-full z-0 block"
+    aria-label="Gesture Synth interactive visualizer canvas"
+  ></canvas>
+
+  <!-- TOP BAR: MODERN MINIMAL CONTROLS -->
+  <header class="absolute top-2 left-2 right-2 z-30 flex flex-col gap-1.5 pointer-events-none">
+    <!-- Row 1: Key, Scale & Global Actions -->
+    <div class="flex items-center justify-between gap-1.5 w-full pointer-events-auto">
+      <div class="flex items-center gap-1.5 flex-wrap">
+        <!-- Key Selector -->
+        <label class="sr-only" for="key-selector">Select Musical Key</label>
+        <select
+          id="key-selector"
+          [value]="selectedKey()"
+          (change)="onKeyChange($event)"
+          class="bg-zinc-950/90 text-amber-400 border border-zinc-800/90 rounded-lg px-2 py-1 text-[11px] sm:text-xs font-mono font-semibold hover:border-amber-500/80 focus:outline-none focus:ring-1 focus:ring-amber-500 cursor-pointer shadow-lg backdrop-blur-md transition-all"
+          title="Root Key Signature"
+        >
+          @for (k of keysList; track k) {
+            <option [value]="k" class="bg-zinc-900 text-zinc-100">Key: {{ k }}</option>
+          }
+        </select>
+
+        <!-- Scale Mode Selector (10 Musical Scales) -->
+        <label class="sr-only" for="scale-selector">Select Musical Scale Mode</label>
+        <select
+          id="scale-selector"
+          [value]="selectedScaleMode()"
+          (change)="onScaleModeChange($event)"
+          class="bg-zinc-950/90 text-amber-300 border border-zinc-800/90 rounded-lg px-2 py-1 text-[11px] sm:text-xs font-mono font-semibold hover:border-amber-500/80 focus:outline-none focus:ring-1 focus:ring-amber-500 cursor-pointer shadow-lg backdrop-blur-md transition-all"
+          title="Musical Scale Mode"
+        >
+          @for (m of scaleModesList; track m.id) {
+            <option [value]="m.id" class="bg-zinc-900 text-zinc-100">{{ m.name }}</option>
+          }
+        </select>
+      </div>
+
+      <!-- Right Group: Audio Controls, Tutorial, and Help -->
+      <div class="flex items-center gap-1 sm:gap-1.5">
+        <!-- Mute Toggle Button -->
+        <button
+          type="button"
+          (click)="toggleMute()"
+          class="bg-zinc-950/90 border border-zinc-800/90 hover:border-zinc-700 text-zinc-300 hover:text-amber-400 rounded-lg p-1.5 sm:p-2 text-xs flex items-center justify-center cursor-pointer shadow-lg backdrop-blur-md transition-all"
+          [title]="isAudioMuted() ? 'Unmute Audio (Space)' : 'Mute Audio (Space)'"
+          [attr.aria-label]="isAudioMuted() ? 'Unmute' : 'Mute'"
+        >
+          <mat-icon class="!text-sm sm:!text-base !w-4 !h-4 leading-none">
+            {{ isAudioMuted() ? 'volume_off' : 'volume_up' }}
+          </mat-icon>
+        </button>
+
+        <!-- Interactive Tutorial Button -->
+        <button
+          type="button"
+          (click)="openTutorial()"
+          class="bg-zinc-950/90 border border-zinc-800/90 hover:border-zinc-700 text-amber-400 rounded-lg px-2 py-1 text-[11px] sm:text-xs font-mono flex items-center gap-1 cursor-pointer shadow-lg backdrop-blur-md transition-all"
+          title="Interactive Tutorial"
+        >
+          <mat-icon class="!text-xs sm:!text-sm !w-3.5 sm:!w-4 !h-3.5 sm:!h-4 leading-none">school</mat-icon>
+          <span class="hidden sm:inline">Tutorial</span>
+        </button>
+
+        <!-- Help & Theory Button -->
+        <button
+          type="button"
+          (click)="openHelp()"
+          class="bg-zinc-950/90 border border-zinc-800/90 hover:border-zinc-700 text-amber-400 rounded-lg w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center text-xs font-bold font-mono cursor-pointer shadow-lg backdrop-blur-md transition-all"
+          title="Settings & Guide (?)"
+          aria-label="Settings and music theory help"
+        >
+          ?
+        </button>
+      </div>
+    </div>
+
+    <!-- Row 2: Preset Selector, Synth Rack & Modes -->
+    <div class="flex items-center gap-1 sm:gap-1.5 pointer-events-auto overflow-x-auto w-full pb-0.5">
+      <!-- Instrument Preset Selector (14 Timbral Presets) -->
+      <label class="sr-only" for="preset-selector">Select Instrument Tone</label>
+      <select
+        id="preset-selector"
+        [value]="selectedPreset()"
+        (change)="onToneChange($event)"
+        class="bg-zinc-950/90 text-amber-400 border border-zinc-800/90 rounded-lg px-2 py-1 text-[11px] sm:text-xs font-mono font-semibold hover:border-amber-500/80 focus:outline-none focus:ring-1 focus:ring-amber-500 cursor-pointer shadow-lg backdrop-blur-md transition-all shrink-0"
+        title="Instrument Sound Preset"
+      >
+        @for (p of presetsList; track p.id) {
+          <option [value]="p.id" class="bg-zinc-900 text-zinc-100">{{ p.name }}</option>
+        }
+      </select>
+
+      <!-- Custom Sound Shaping Rack Button -->
+      <button
+        type="button"
+        (click)="toggleSoundRack()"
+        class="border rounded-lg px-2 py-1 text-[11px] sm:text-xs font-mono font-medium flex items-center gap-1 cursor-pointer shadow-lg backdrop-blur-md transition-all shrink-0"
+        [class]="soundRackOpen() ? 'bg-amber-500/20 border-amber-500 text-amber-300 shadow-amber-500/10' : 'bg-zinc-950/90 border-zinc-800/90 text-zinc-300 hover:text-amber-400 hover:border-zinc-700'"
+        title="Customize Sound & Synth Rack [S]"
+        [attr.aria-expanded]="soundRackOpen()"
+        aria-controls="sound-rack-drawer"
+      >
+        <mat-icon class="!text-xs sm:!text-sm !w-3.5 sm:!w-4 !h-3.5 sm:!h-4 leading-none">tune</mat-icon>
+        <span class="hidden sm:inline">Synth Rack</span>
+        <span class="text-[9px] sm:text-[10px] text-zinc-400 font-normal">[S]</span>
+      </button>
+
+      <!-- Gesture Guide Toggle Button -->
+      <button
+        type="button"
+        (click)="toggleGuide()"
+        class="bg-zinc-950/90 border border-zinc-800/90 hover:border-zinc-700 text-zinc-300 hover:text-amber-400 rounded-lg px-2 py-1 text-[11px] sm:text-xs font-mono font-medium flex items-center gap-1 cursor-pointer shadow-lg backdrop-blur-md transition-all shrink-0"
+        [attr.aria-expanded]="guideVisible()"
+        aria-controls="gesture-guide"
+        title="Toggle Gesture Reference Guide"
+      >
+        <mat-icon class="!text-xs sm:!text-sm !w-3.5 sm:!w-4 !h-3.5 sm:!h-4 leading-none">menu_book</mat-icon>
+        <span class="hidden sm:inline">{{ guideVisible() ? 'Hide Guide' : 'Open Guide' }}</span>
+      </button>
+
+      <!-- Camera / Virtual Simulator Toggle -->
+      <button
+        type="button"
+        (click)="toggleCameraMode()"
+        class="border rounded-lg px-2 py-1 text-[11px] sm:text-xs font-mono font-medium flex items-center gap-1 cursor-pointer shadow-lg backdrop-blur-md transition-all shrink-0"
+        [class]="cameraStatus() === 'active' ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-300' : 'bg-zinc-950/90 border-zinc-800/90 text-zinc-300 hover:text-amber-400 hover:border-zinc-700'"
+        [title]="cameraStatus() === 'active' ? 'Webcam active (click to use Virtual Simulator)' : 'Using Virtual Simulator (click for Webcam)'"
+      >
+        <mat-icon class="!text-xs sm:!text-sm !w-3.5 sm:!w-4 !h-3.5 sm:!h-4 leading-none">
+          {{ cameraStatus() === 'active' ? 'videocam' : 'videocam_off' }}
+        </mat-icon>
+        <span class="hidden sm:inline">
+          {{ cameraStatus() === 'active' ? 'Cam' : 'Virtual' }}
+        </span>
+      </button>
+
+      <!-- Keyboard Bar Toggle -->
+      <button
+        type="button"
+        (click)="toggleKeyboardBar()"
+        class="border rounded-lg px-2 py-1 text-[11px] sm:text-xs font-mono font-medium flex items-center gap-1 cursor-pointer shadow-lg backdrop-blur-md transition-all shrink-0"
+        [class]="keyboardBarVisible() ? 'bg-amber-500/20 border-amber-500 text-amber-300' : 'bg-zinc-950/90 border-zinc-800/90 text-zinc-400 hover:text-zinc-200'"
+        title="Toggle Keyboard Bar [K]"
+      >
+        <mat-icon class="!text-xs sm:!text-sm !w-3.5 sm:!w-4 !h-3.5 sm:!h-4 leading-none">keyboard</mat-icon>
+        <span class="hidden sm:inline">Tasti [K]</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- SOUND SHAPING STUDIO / SYNTH RACK DRAWER -->
+  @if (soundRackOpen()) {
+    <aside
+      id="sound-rack-drawer"
+      class="absolute top-16 sm:top-14 right-2.5 z-40 bg-zinc-950/95 border border-zinc-800/90 rounded-2xl p-4 shadow-2xl backdrop-blur-xl w-[92vw] sm:w-84 max-h-[84vh] overflow-y-auto"
+      role="region"
+      aria-labelledby="rack-heading"
+    >
+      <!-- Header -->
+      <div class="flex items-center justify-between border-b border-zinc-800/90 pb-2.5 mb-3">
+        <div class="flex items-center gap-2">
+          <mat-icon class="text-amber-400 !text-lg !w-5 !h-5">tune</mat-icon>
+          <div>
+            <h2 id="rack-heading" class="text-xs font-bold uppercase tracking-wider text-amber-300">
+              Synth Shaping Rack
+            </h2>
+            <div class="text-[10px] text-zinc-400">Tone, ADSR, Filter & Space</div>
+          </div>
+        </div>
+        <div class="flex items-center gap-1">
+          <button
+            type="button"
+            (click)="resetSoundParams()"
+            class="text-[10px] text-zinc-400 hover:text-amber-400 p-1 rounded hover:bg-zinc-900 transition-colors flex items-center gap-1"
+            title="Reset to preset defaults"
+          >
+            <mat-icon class="!text-xs !w-3.5 !h-3.5">restart_alt</mat-icon>
+            <span>Reset</span>
+          </button>
+          <button
+            type="button"
+            (click)="closeSoundRack()"
+            class="text-zinc-400 hover:text-zinc-100 p-1 rounded hover:bg-zinc-900"
+            aria-label="Close synth rack"
+          >
+            <mat-icon class="!text-sm !w-4 !h-4">close</mat-icon>
+          </button>
+        </div>
+      </div>
+
+      <div class="space-y-3.5 text-xs">
+        <!-- Waveform Selector -->
+        <div>
+          <div class="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5 flex justify-between">
+            <span>Waveform Core</span>
+            <span class="text-amber-400">{{ customParams().waveform }}</span>
+          </div>
+          <div class="grid grid-cols-5 gap-1 bg-zinc-900/80 p-1 rounded-lg border border-zinc-800">
+            @for (w of waveformsList; track w) {
+              <button
+                type="button"
+                (click)="setWaveform(w)"
+                class="py-1 text-[10px] rounded capitalize transition-all font-mono cursor-pointer"
+                [class]="customParams().waveform === w ? 'bg-amber-400 text-black font-bold shadow' : 'text-zinc-400 hover:text-zinc-200'"
+              >
+                {{ w }}
+              </button>
+            }
+          </div>
+        </div>
+
+        <!-- Envelope Section: Attack & Release -->
+        <div class="space-y-2.5 bg-zinc-900/50 p-2.5 rounded-xl border border-zinc-850">
+          <div class="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Envelope (ADSR)</div>
+
+          <!-- Attack -->
+          <div>
+            <div class="flex justify-between text-[11px] mb-1">
+              <span class="text-zinc-400">Attack Time</span>
+              <span class="text-amber-300 font-mono">{{ Math.round(customParams().attack * 1000) }} ms</span>
+            </div>
+            <input
+              type="range"
+              min="0.005"
+              max="0.6"
+              step="0.005"
+              [value]="customParams().attack"
+              (input)="setCustomParam('attack', +$any($event.target).value)"
+              class="w-full accent-amber-400 bg-zinc-800 rounded-lg h-1.5 cursor-pointer"
+            />
+          </div>
+
+          <!-- Release -->
+          <div>
+            <div class="flex justify-between text-[11px] mb-1">
+              <span class="text-zinc-400">Release Tail</span>
+              <span class="text-amber-300 font-mono">{{ Math.round(customParams().release * 1000) }} ms</span>
+            </div>
+            <input
+              type="range"
+              min="0.05"
+              max="2.0"
+              step="0.01"
+              [value]="customParams().release"
+              (input)="setCustomParam('release', +$any($event.target).value)"
+              class="w-full accent-amber-400 bg-zinc-800 rounded-lg h-1.5 cursor-pointer"
+            />
+          </div>
+        </div>
+
+        <!-- Filter & Tone Section -->
+        <div class="space-y-2.5 bg-zinc-900/50 p-2.5 rounded-xl border border-zinc-850">
+          <div class="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Filter & Resonance</div>
+
+          <!-- Cutoff -->
+          <div>
+            <div class="flex justify-between text-[11px] mb-1">
+              <span class="text-zinc-400">Base Cutoff</span>
+              <span class="text-amber-300 font-mono">{{ customParams().cutoff }} Hz</span>
+            </div>
+            <input
+              type="range"
+              min="200"
+              max="10000"
+              step="50"
+              [value]="customParams().cutoff"
+              (input)="setCustomParam('cutoff', +$any($event.target).value)"
+              class="w-full accent-amber-400 bg-zinc-800 rounded-lg h-1.5 cursor-pointer"
+            />
+          </div>
+
+          <!-- Resonance (Q) -->
+          <div>
+            <div class="flex justify-between text-[11px] mb-1">
+              <span class="text-zinc-400">Resonance (Q)</span>
+              <span class="text-amber-300 font-mono">{{ customParams().resonance.toFixed(1) }}</span>
+            </div>
+            <input
+              type="range"
+              min="0.4"
+              max="3.8"
+              step="0.1"
+              [value]="customParams().resonance"
+              (input)="setCustomParam('resonance', +$any($event.target).value)"
+              class="w-full accent-amber-400 bg-zinc-800 rounded-lg h-1.5 cursor-pointer"
+            />
+          </div>
+        </div>
+
+        <!-- Space, Detune & Sub Section -->
+        <div class="space-y-2.5 bg-zinc-900/50 p-2.5 rounded-xl border border-zinc-850">
+          <div class="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Space & Harmonics</div>
+
+          <!-- Reverb / Space -->
+          <div>
+            <div class="flex justify-between text-[11px] mb-1">
+              <span class="text-zinc-400">Space / Reverb</span>
+              <span class="text-amber-300 font-mono">{{ Math.round(customParams().reverb * 100) }}%</span>
+            </div>
+            <input
+              type="range"
+              min="0.0"
+              max="0.8"
+              step="0.02"
+              [value]="customParams().reverb"
+              (input)="setCustomParam('reverb', +$any($event.target).value)"
+              class="w-full accent-amber-400 bg-zinc-800 rounded-lg h-1.5 cursor-pointer"
+            />
+          </div>
+
+          <!-- Detune / Chorus -->
+          <div>
+            <div class="flex justify-between text-[11px] mb-1">
+              <span class="text-zinc-400">Stereo Detune</span>
+              <span class="text-amber-300 font-mono">{{ customParams().detune }} cents</span>
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="30"
+              step="1"
+              [value]="customParams().detune"
+              (input)="setCustomParam('detune', +$any($event.target).value)"
+              class="w-full accent-amber-400 bg-zinc-800 rounded-lg h-1.5 cursor-pointer"
+            />
+          </div>
+
+          <!-- Sub-Oscillator Toggle -->
+          <div class="flex items-center justify-between pt-1 border-t border-zinc-800">
+            <div>
+              <div class="text-[11px] font-semibold text-zinc-200">Sub-Oscillator (-1 Oct)</div>
+              <div class="text-[10px] text-zinc-400">Adds deep sine bottom end</div>
+            </div>
+            <button
+              type="button"
+              (click)="setCustomParam('subOsc', !customParams().subOsc)"
+              class="px-2.5 py-1 text-[11px] rounded font-bold cursor-pointer transition-colors border"
+              [class]="customParams().subOsc ? 'bg-amber-400 border-amber-400 text-black' : 'bg-zinc-800 border-zinc-700 text-zinc-400'"
+            >
+              {{ customParams().subOsc ? 'ON' : 'OFF' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </aside>
+  }
+
+  <!-- LIVE GESTURE GUIDE HUD (Collapsible) -->
+  @if (guideVisible()) {
+    <aside
+      id="gesture-guide"
+      class="absolute top-26 sm:top-14 left-2 sm:left-2.5 z-10 flex flex-row overflow-x-auto gap-2 max-w-[calc(100vw-16px)] pointer-events-none pb-1"
+      aria-label="Gesture reference guide"
+    >
+      <!-- LEFT HAND PANEL (Degrees I to VII with dynamic notes) -->
+      <div class="bg-zinc-950/85 border border-zinc-800/90 rounded-xl p-2.5 backdrop-blur-md shadow-2xl pointer-events-auto min-w-[135px]">
+        <div class="text-[10px] tracking-widest text-zinc-400 font-bold uppercase mb-1.5 flex items-center justify-between border-b border-zinc-800/80 pb-1">
+          <span>LEFT HAND</span>
+          <span class="text-[9px] text-amber-400/80">{{ selectedScaleMode() }}</span>
+        </div>
+
+        <div class="space-y-0.5">
+          @for (row of guideDegreeRows(); track row.degree) {
+            <div
+              class="flex items-center justify-between px-2 py-0.5 rounded text-xs transition-colors duration-100"
+              [class]="activeDegree() === row.roman ? 'bg-amber-400/20 text-amber-300 font-bold border border-amber-400/40' : 'text-zinc-400 hover:text-zinc-200'"
+            >
+              <span class="font-mono text-xs w-9 text-zinc-300">{{ row.name }}</span>
+              <span class="text-[10px] text-zinc-500 mr-auto ml-1">{{ row.roman }}</span>
+              <span class="text-sm leading-none">{{ row.gesture }}</span>
+            </div>
+          }
+
+          <!-- Mano Chiusa / Silenzio row -->
+          <div
+            class="flex items-center justify-between px-2 py-0.5 rounded text-xs transition-colors duration-100 border-t border-zinc-800/60 pt-1 mt-0.5"
+            [class]="isHandClosed() || (cameraStatus() === 'active' && handsDetected() && activeDegree() === null) ? 'bg-rose-500/25 text-rose-300 font-bold border border-rose-500/50' : 'text-zinc-500 hover:text-zinc-400'"
+          >
+            <span class="font-mono text-xs text-zinc-400">Silenzio</span>
+            <span class="text-[10px] text-zinc-500 mr-auto ml-1">0 dita</span>
+            <span class="text-sm leading-none">✊</span>
+          </div>
+        </div>
+
+        <!-- Tilt Indicator (Major vs Minor) -->
+        <div class="mt-2 pt-1.5 border-t border-zinc-800/80 flex gap-1 text-[10px]">
+          <div
+            class="flex-1 text-center py-1 rounded transition-colors"
+            [class]="!isMajor() && activeDegree() !== null ? 'bg-rose-500/25 text-rose-300 font-bold border border-rose-500/40' : 'text-zinc-500 bg-black/25'"
+          >
+            ↖️ Minor
+          </div>
+          <div
+            class="flex-1 text-center py-1 rounded transition-colors"
+            [class]="isMajor() && activeDegree() !== null ? 'bg-amber-400/25 text-amber-300 font-bold border border-amber-400/40' : 'text-zinc-500 bg-black/25'"
+          >
+            ↗️ Major
+          </div>
+        </div>
+      </div>
+
+      <!-- RIGHT HAND PANEL (Voicing & Inversions) -->
+      @if (isTwoHandedMode()) {
+        <div class="bg-zinc-950/85 border border-zinc-800/90 rounded-xl p-2.5 backdrop-blur-md shadow-2xl pointer-events-auto min-w-[130px]">
+          <div class="text-[10px] tracking-widest text-zinc-400 font-bold uppercase mb-1.5 flex items-center justify-between border-b border-zinc-800/80 pb-1">
+            <span>RIGHT HAND</span>
+            <span class="text-[9px] text-cyan-400/80">VOICING</span>
+          </div>
+
+          <div class="space-y-0.5">
+            @for (v of rightHandVoicings(); track v.index) {
+              <div
+                class="flex items-center justify-between px-2 py-0.5 rounded text-xs transition-colors duration-100"
+                [class]="voicingQuality() === v.index && activeDegree() !== null ? 'bg-cyan-500/20 text-cyan-300 font-bold border border-cyan-500/40' : 'text-zinc-400 hover:text-zinc-200'"
+              >
+                <span class="text-sm leading-none">{{ v.gesture }}</span>
+                <span class="text-xs text-right">{{ v.label }}</span>
+              </div>
+            }
+
+            <!-- Right hand closed / mute row -->
+            <div
+              class="flex items-center justify-between px-2 py-0.5 rounded text-xs transition-colors duration-100 border-t border-zinc-800/60 pt-1 mt-0.5"
+              [class]="isHandClosed() ? 'bg-rose-500/25 text-rose-300 font-bold border border-rose-500/50' : 'text-zinc-500 hover:text-zinc-400'"
+            >
+              <span class="text-sm leading-none">✊</span>
+              <span class="text-xs text-right">Mute / Stop</span>
+            </div>
+          </div>
+
+          <!-- Octave Indicator -->
+          <div class="mt-2 pt-1.5 border-t border-zinc-800/80">
+            <div class="text-[9px] text-zinc-400 tracking-wider uppercase mb-1 text-center">OCTAVE</div>
+            <div class="flex gap-1 text-[10px]">
+              <div
+                class="flex-1 text-center py-1 rounded transition-colors"
+                [class]="octaveShift() > 1.0 ? 'bg-cyan-500/25 text-cyan-300 font-bold border border-cyan-500/40' : 'text-zinc-500 bg-black/25'"
+              >
+                High
+              </div>
+              <div
+                class="flex-1 text-center py-1 rounded transition-colors"
+                [class]="octaveShift() === 1.0 ? 'bg-zinc-800 text-zinc-200 font-bold' : 'text-zinc-500 bg-black/25'"
+              >
+                Mid
+              </div>
+              <div
+                class="flex-1 text-center py-1 rounded transition-colors"
+                [class]="octaveShift() < 1.0 ? 'bg-cyan-500/25 text-cyan-300 font-bold border border-cyan-500/40' : 'text-zinc-500 bg-black/25'"
+              >
+                Low
+              </div>
+            </div>
+          </div>
+        </div>
+      }
+    </aside>
+  }
+
+  <!-- RIGHT SIDE: VOLUME METER & FILTER READOUT (shown when synth rack is closed) -->
+  @if (!soundRackOpen()) {
+    <aside class="absolute top-24 sm:top-14 right-3 z-10 flex flex-col items-end gap-2.5 pointer-events-none" aria-label="Audio meters">
+      <!-- Volume LED Meter (8 Segments) -->
+      <div class="bg-zinc-950/85 border border-zinc-800/90 rounded-xl p-2 flex flex-col items-center gap-1 backdrop-blur-md shadow-xl pointer-events-auto">
+        <div class="text-[9px] font-bold text-zinc-400 tracking-wider">VOL</div>
+        <div class="flex flex-col-reverse gap-1 py-0.5">
+          @for (seg of [1, 2, 3, 4, 5, 6, 7, 8]; track seg) {
+            <div
+              class="w-5 h-2 rounded-xs vol-led"
+              [class.active]="volumeLedCount() >= seg"
+            ></div>
+          }
+        </div>
+        <div class="text-[9px] text-zinc-400">{{ Math.round(currentVolume() * 100) }}%</div>
+      </div>
+
+      <!-- Filter Frequency Indicator -->
+      <div class="bg-zinc-950/85 border border-zinc-800/90 rounded-xl px-2.5 py-1.5 text-right backdrop-blur-md shadow-xl pointer-events-auto">
+        <div class="text-[9px] text-zinc-400 tracking-wider uppercase">FILTER CUTOFF</div>
+        <div class="text-xs font-bold text-amber-400 font-mono">{{ currentFilterFreq() }} Hz</div>
+      </div>
+
+      <!-- Scale Mode Pill -->
+      <div class="bg-zinc-950/85 border border-zinc-800/90 rounded-xl px-2.5 py-1 text-right backdrop-blur-md shadow-xl pointer-events-auto">
+        <div class="text-[9px] text-zinc-400 uppercase tracking-wider">SCALE</div>
+        <div class="text-xs font-semibold text-zinc-200 capitalize">{{ selectedScaleMode() }}</div>
+      </div>
+    </aside>
+  }
+
+  <!-- CENTER CHORD DISPLAY BADGE & SOUND REACTION -->
+  <section
+    class="absolute left-0 right-0 z-10 flex flex-col items-center justify-center pointer-events-none px-4 transition-all duration-200"
+    [class]="started() && keyboardBarVisible() ? 'bottom-26 sm:bottom-32' : 'bottom-6 sm:bottom-8'"
+  >
+    @if (cameraStatus() === 'active' && !handsDetected()) {
+      <!-- Silent / Waiting for Hands Badge -->
+      <div class="flex flex-col items-center gap-1 animate-pulse text-center">
+        <div class="px-3 py-1 rounded-full text-[10px] sm:text-xs font-mono font-semibold bg-zinc-950/90 border border-amber-500/40 text-amber-300 flex items-center gap-2 shadow-xl backdrop-blur-md">
+          <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
+          <span>SILENZIOSO • MOSTRA LE MANI PER SUONARE</span>
+        </div>
+        <div class="text-3xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-600 font-mono py-0.5 leading-none">
+          --
+        </div>
+        <div class="text-[10px] sm:text-xs text-zinc-400 font-mono">
+          Il suono si attiva solo con le mani inquadrate dalla webcam
+        </div>
+      </div>
+    } @else if (isHandClosed() || (cameraStatus() === 'active' && handsDetected() && activeDegree() === null)) {
+      <!-- Silent / Closed Hand (Fist) Badge -->
+      <div class="flex flex-col items-center gap-1 text-center">
+        <div class="px-3.5 py-1 rounded-full text-[10px] sm:text-xs font-mono font-bold bg-zinc-950/95 border border-rose-500/50 text-rose-300 flex items-center gap-2 shadow-2xl backdrop-blur-md">
+          <span class="text-base leading-none">✊</span>
+          <span>MANO CHIUSA • NESSUN SUONO (SILENZIO)</span>
+        </div>
+        <div class="text-3xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-600 font-mono py-0.5 leading-none">
+          --
+        </div>
+        <div class="text-[10px] sm:text-xs text-zinc-400 font-mono">
+          Apri 1-5 dita (o corna 🤘 / ILY 🤟) per riprodurre un accordo
+        </div>
+      </div>
+    } @else {
+      <!-- Quality Pill Tag -->
+      <div
+        class="text-[10px] sm:text-[11px] font-bold tracking-widest uppercase px-3 py-0.5 rounded-full mb-0.5 transition-all"
+        [class]="isMajor() ? 'text-amber-400 bg-amber-400/15 border border-amber-400/30' : 'text-rose-400 bg-rose-500/20 border border-rose-500/30'"
+      >
+        {{ isMajor() ? 'MAJOR' : 'MINOR' }}
+        {{ isMajor() ? '↗️' : '↖️' }}
+      </div>
+
+      <!-- Giant Glowing Chord Name -->
+      <div
+        class="text-3xl sm:text-6xl md:text-7xl font-bold tracking-tight text-center transition-all duration-150 py-0.5 leading-none"
+        [style.color]="activeDegreeColor()"
+        [class.glow-amber]="activeDegree() !== null"
+      >
+        {{ chordDisplayName() }}
+      </div>
+
+      <!-- Sub-info: Key, Scale Mode, Degree & Preset -->
+      <div class="text-[10px] sm:text-xs text-zinc-400 tracking-wider flex items-center gap-1.5 sm:gap-3 mt-1 flex-wrap justify-center">
+        <span>KEY: <strong class="text-zinc-200">{{ selectedKey() }}</strong></span>
+        <span>•</span>
+        <span>SCALE: <strong class="text-amber-300 capitalize">{{ selectedScaleMode() }}</strong></span>
+        <span>•</span>
+        <span>DEGREE: <strong class="text-zinc-200">{{ activeDegree() || '--' }}</strong></span>
+        <span class="hidden sm:inline">•</span>
+        <span class="hidden sm:inline">TONE: <strong class="text-zinc-200">{{ selectedPreset() }}</strong></span>
+      </div>
+    }
+  </section>
+
+  <!-- INTERACTIVE KEYBOARD & VIRTUAL STUDIO (Bottom Docked Toolbar) -->
+  @if (started() && keyboardBarVisible()) {
+    <section
+      class="absolute bottom-2.5 sm:bottom-3 left-1/2 -translate-x-1/2 z-20 bg-zinc-950/95 border border-zinc-800/90 rounded-2xl p-2.5 sm:p-3 shadow-2xl backdrop-blur-xl flex flex-col gap-2 max-w-[96vw] w-fit"
+      aria-label="Keyboard and virtual controls"
+    >
+      <div class="flex items-center justify-between text-[11px] text-amber-400 font-bold border-b border-zinc-800/80 pb-1.5">
+        <span class="flex items-center gap-1.5">
+          <mat-icon class="!text-sm !w-4 !h-4">keyboard</mat-icon>
+          Tastiera & Controlli Virtuali
+        </span>
+        <span class="text-[10px] text-zinc-400 font-normal">Tasti [1-7], [M], [Q-R], [Z/X], [0/Esc Ferma], [K], [S]</span>
+      </div>
+
+      <!-- Left Hand Degree Buttons & Stop Button -->
+      <div class="flex items-center gap-1 overflow-x-auto py-0.5">
+        <span class="text-[10px] text-zinc-400 mr-1 shrink-0">Chords:</span>
+        @for (row of guideDegreeRows(); track row.degree) {
+          <button
+            type="button"
+            (click)="setVirtualDegree(row.roman)"
+            class="px-2.5 py-1 rounded-lg text-xs font-mono transition-all shrink-0 cursor-pointer"
+            [class]="activeDegree() === row.roman ? 'bg-amber-400 text-black font-bold shadow-md shadow-amber-500/20' : 'bg-zinc-900 text-zinc-300 hover:bg-zinc-800 border border-zinc-800'"
+            [title]="'Degree ' + row.roman + ' (' + row.name + ')'"
+          >
+            {{ row.gesture }} {{ row.name }} ({{ row.roman }})
+          </button>
+        }
+
+        <button
+          type="button"
+          (click)="stopVirtualSound()"
+          class="px-2.5 py-1 rounded-lg text-xs font-mono transition-all shrink-0 cursor-pointer border border-zinc-700 bg-zinc-900/90 text-zinc-400 hover:text-rose-400 hover:border-rose-500/50 flex items-center gap-1 ml-1"
+          title="Ferma il suono ora [0 o Esc]"
+        >
+          <span class="text-rose-400 leading-none">■</span>
+          <span>Ferma</span>
+        </button>
+      </div>
+
+      <!-- Mode & Voicing controls row -->
+      <div class="flex flex-wrap items-center gap-3 pt-1 border-t border-zinc-800/80 text-xs">
+        <!-- Major / Minor toggle -->
+        <button
+          type="button"
+          (click)="toggleVirtualMajorMinor()"
+          class="px-2.5 py-1 rounded-lg font-bold cursor-pointer transition-colors border"
+          [class]="isMajor() ? 'bg-amber-400/20 border-amber-400 text-amber-300' : 'bg-rose-500/20 border-rose-500 text-rose-300'"
+        >
+          {{ isMajor() ? '↗️ Major' : '↖️ Minor' }}
+        </button>
+
+        <!-- Voicing Buttons -->
+        <div class="flex items-center gap-1">
+          <span class="text-[10px] text-zinc-400 mr-0.5">Voicing:</span>
+          @for (v of rightHandVoicings(); track v.index) {
+            <button
+              type="button"
+              (click)="setVirtualVoicing(v.index)"
+              class="px-2 py-0.5 rounded text-[11px] cursor-pointer transition-colors"
+              [class]="voicingQuality() === v.index ? 'bg-cyan-400 text-black font-bold shadow' : 'bg-zinc-900 text-zinc-300 hover:bg-zinc-800 border border-zinc-800'"
+            >
+              {{ v.label }}
+            </button>
+          }
+        </div>
+
+        <!-- Octave shift buttons -->
+        <div class="flex items-center gap-1 ml-auto">
+          <span class="text-[10px] text-zinc-400">Octave:</span>
+          <button
+            type="button"
+            (click)="setVirtualOctave(0.5)"
+            class="px-1.5 py-0.5 rounded text-[10px] cursor-pointer"
+            [class]="octaveShift() === 0.5 ? 'bg-cyan-400 text-black font-bold' : 'bg-zinc-900 text-zinc-300 border border-zinc-800'"
+          >
+            -1
+          </button>
+          <button
+            type="button"
+            (click)="setVirtualOctave(1.0)"
+            class="px-1.5 py-0.5 rounded text-[10px] cursor-pointer"
+            [class]="octaveShift() === 1.0 ? 'bg-zinc-200 text-black font-bold' : 'bg-zinc-900 text-zinc-300 border border-zinc-800'"
+          >
+            0
+          </button>
+          <button
+            type="button"
+            (click)="setVirtualOctave(2.0)"
+            class="px-1.5 py-0.5 rounded text-[10px] cursor-pointer"
+            [class]="octaveShift() === 2.0 ? 'bg-cyan-400 text-black font-bold' : 'bg-zinc-900 text-zinc-300 border border-zinc-800'"
+          >
+            +1
+          </button>
+        </div>
+      </div>
+    </section>
+  }
+
+  <!-- START WELCOME MODAL OVERLAY -->
+  @if (!started()) {
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="start-title"
+    >
+      <div class="bg-zinc-950 border border-zinc-800/90 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl text-center relative glow-box-amber">
+        <div class="text-xs font-bold tracking-widest text-amber-400 uppercase mb-2">GESTURE SYNTH STUDIO</div>
+        <h1 id="start-title" class="text-2xl sm:text-3xl font-bold mb-3 tracking-tight text-white">
+          make music with your hands 🙌
+        </h1>
+        <p class="text-sm text-zinc-300 mb-6 leading-relaxed">
+          Expressive polyphonic synthesizer controlled by hand gestures in your webcam, or through the built-in virtual keyboard & mouse studio.
+        </p>
+
+        <div class="flex flex-col sm:flex-row gap-3 justify-center mb-6">
+          <button
+            type="button"
+            (click)="openTutorial()"
+            class="px-5 py-3 rounded-xl border border-zinc-700 bg-zinc-900 text-amber-400 font-bold text-sm hover:bg-zinc-800 transition-colors flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <mat-icon class="!text-base !w-4 !h-4">menu_book</mat-icon>
+            <span>learn how to play</span>
+          </button>
+
+          <button
+            type="button"
+            (click)="startApp(false)"
+            class="px-6 py-3 rounded-xl bg-amber-400 text-black font-bold text-sm hover:bg-amber-300 transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer shadow-amber-400/20"
+          >
+            <mat-icon class="!text-base !w-4 !h-4">videocam</mat-icon>
+            <span>play with camera</span>
+          </button>
+        </div>
+
+        <button
+          type="button"
+          (click)="startApp(true)"
+          class="text-xs text-zinc-400 hover:text-zinc-200 underline cursor-pointer mb-4 block mx-auto"
+        >
+          or play with keyboard & mouse (no camera required)
+        </button>
+
+        <div class="text-[11px] text-zinc-500 border-t border-zinc-800/80 pt-3">
+          Camera tracking runs 100% locally in your browser via MediaPipe. No video leaves your device.
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- INTERACTIVE TUTORIAL MODAL -->
+  @if (tutorialOpen()) {
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="tutorial-heading"
+    >
+      <div class="bg-zinc-950 border border-zinc-800/90 rounded-3xl p-6 max-w-md w-full shadow-2xl relative">
+        <button
+          type="button"
+          (click)="closeTutorial()"
+          class="absolute top-4 right-4 text-zinc-400 hover:text-white p-1 cursor-pointer"
+          aria-label="Close tutorial"
+        >
+          <mat-icon class="!text-lg">close</mat-icon>
+        </button>
+
+        <!-- Progress step -->
+        <div class="text-xs font-bold text-amber-400 uppercase tracking-wider mb-1">
+          Tutorial Step {{ currentTutorialStep().step }} of {{ currentTutorialStep().totalSteps }}
+        </div>
+
+        <h2 id="tutorial-heading" class="text-xl font-bold mb-2 text-white">
+          {{ currentTutorialStep().title }}
+        </h2>
+
+        <p class="text-sm text-zinc-300 mb-4 leading-relaxed">
+          {{ currentTutorialStep().description }}
+        </p>
+
+        <!-- Visual Hand Guidance Box -->
+        <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-3.5 mb-4 space-y-2">
+          <div class="flex items-center justify-between text-xs">
+            <span class="text-zinc-400">Left Hand Goal:</span>
+            <span class="font-bold text-amber-400">{{ currentTutorialStep().leftHandGoal }}</span>
+          </div>
+          @if (currentTutorialStep().rightHandGoal) {
+            <div class="flex items-center justify-between text-xs border-t border-zinc-800 pt-1.5">
+              <span class="text-zinc-400">Right Hand Goal:</span>
+              <span class="font-bold text-cyan-400">{{ currentTutorialStep().rightHandGoal }}</span>
+            </div>
+          }
+        </div>
+
+        <!-- Music Theory Note -->
+        <div class="text-xs text-zinc-400 italic bg-zinc-900/60 p-3 rounded-xl border border-zinc-850 mb-5">
+          💡 {{ currentTutorialStep().theory }}
+        </div>
+
+        <!-- Goal Status Indicator -->
+        <div class="flex items-center justify-between mb-5">
+          <div class="flex items-center gap-2 text-xs">
+            @if (isTutorialStepSatisfied()) {
+              <span class="inline-flex items-center gap-1 text-emerald-400 font-bold">
+                <mat-icon class="!text-base !w-4 !h-4">check_circle</mat-icon>
+                Goal matched! Great job!
+              </span>
+            } @else {
+              <span class="inline-flex items-center gap-1 text-zinc-400">
+                <mat-icon class="!text-base !w-4 !h-4 animate-spin">autorenew</mat-icon>
+                Try the gesture or use Virtual Simulator buttons
+              </span>
+            }
+          </div>
+        </div>
+
+        <!-- Navigation buttons -->
+        <div class="flex items-center justify-between gap-3">
+          <button
+            type="button"
+            (click)="prevTutorialStep()"
+            [disabled]="currentTutorialStepIndex() === 0"
+            class="px-4 py-2 rounded-xl text-xs border border-zinc-800 text-zinc-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-zinc-800 cursor-pointer"
+          >
+            Previous
+          </button>
+
+          <button
+            type="button"
+            (click)="nextTutorialStep()"
+            class="px-5 py-2 rounded-xl text-xs font-bold bg-amber-400 text-black hover:bg-amber-300 cursor-pointer ml-auto"
+          >
+            {{ currentTutorialStepIndex() === tutorialSteps.length - 1 ? 'Finish & Jam' : 'Next Step →' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- SETTINGS & MUSIC THEORY MODAL '?' -->
+  @if (helpOpen()) {
+    <div
+      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="help-title"
+    >
+      <div class="bg-zinc-950 border border-zinc-800/90 rounded-3xl p-6 max-w-lg w-full max-h-[85vh] overflow-y-auto shadow-2xl relative">
+        <button
+          type="button"
+          (click)="closeHelp()"
+          class="absolute top-4 right-4 text-zinc-400 hover:text-white p-1 cursor-pointer"
+          aria-label="Close settings"
+        >
+          <mat-icon class="!text-lg">close</mat-icon>
+        </button>
+
+        <h2 id="help-title" class="text-xl font-bold mb-4 flex items-center gap-2 text-white">
+          <mat-icon class="text-amber-400">tune</mat-icon>
+          Gesture Synth Settings & Guide
+        </h2>
+
+        <!-- Mode Toggles -->
+        <div class="space-y-4 mb-6">
+          <div class="flex items-center justify-between border-b border-zinc-800/80 pb-3">
+            <div>
+              <div class="text-sm font-bold text-zinc-100">Hand Tracking Mode</div>
+              <div class="text-xs text-zinc-400">Use both hands or left hand only</div>
+            </div>
+            <div class="flex gap-1 bg-zinc-900 p-1 rounded-xl border border-zinc-800">
+              <button
+                type="button"
+                (click)="setHandMode(true)"
+                class="px-2.5 py-1 text-xs rounded-lg font-bold cursor-pointer transition-colors"
+                [class]="isTwoHandedMode() ? 'bg-amber-400 text-black' : 'text-zinc-400 hover:text-zinc-200'"
+              >
+                Two-Handed
+              </button>
+              <button
+                type="button"
+                (click)="setHandMode(false)"
+                class="px-2.5 py-1 text-xs rounded-lg font-bold cursor-pointer transition-colors"
+                [class]="!isTwoHandedMode() ? 'bg-amber-400 text-black' : 'text-zinc-400 hover:text-zinc-200'"
+              >
+                One-Handed
+              </button>
+            </div>
+          </div>
+
+          <div class="flex items-center justify-between border-b border-zinc-800/80 pb-3">
+            <div>
+              <div class="text-sm font-bold text-zinc-100">Semitone Pitch Shift</div>
+              <div class="text-xs text-zinc-400">Raise (♯) or Lower (♭) root note</div>
+            </div>
+            <div class="flex gap-1 bg-zinc-900 p-1 rounded-xl border border-zinc-800">
+              <button
+                type="button"
+                (click)="setSemitoneShift('lower')"
+                class="px-2 py-1 text-xs rounded-lg font-bold cursor-pointer transition-colors"
+                [class]="semitoneShift() === 'lower' ? 'bg-amber-400 text-black' : 'text-zinc-400'"
+              >
+                ♭ Lower
+              </button>
+              <button
+                type="button"
+                (click)="setSemitoneShift('off')"
+                class="px-2 py-1 text-xs rounded-lg font-bold cursor-pointer transition-colors"
+                [class]="semitoneShift() === 'off' ? 'bg-amber-400 text-black' : 'text-zinc-400'"
+              >
+                Off
+              </button>
+              <button
+                type="button"
+                (click)="setSemitoneShift('raise')"
+                class="px-2 py-1 text-xs rounded-lg font-bold cursor-pointer transition-colors"
+                [class]="semitoneShift() === 'raise' ? 'bg-amber-400 text-black' : 'text-zinc-400'"
+              >
+                ♯ Raise
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Cheat Sheet Reference -->
+        <div class="mb-4">
+          <div class="text-xs font-bold text-amber-400 uppercase tracking-wider mb-2">
+            Gesture Cheat Sheet
+          </div>
+          <div class="text-xs space-y-1.5 text-zinc-300">
+            <div class="flex justify-between py-1 border-b border-zinc-800/80">
+              <span>Left Hand 1 - 5 Fingers</span>
+              <span class="text-zinc-400">Scale Degrees I to V</span>
+            </div>
+            <div class="flex justify-between py-1 border-b border-zinc-800/80">
+              <span>Left Hand 🤘 Horns / 🤟 ILY</span>
+              <span class="text-zinc-400">Degrees VI and VII</span>
+            </div>
+            <div class="flex justify-between py-1 border-b border-zinc-800/80">
+              <span>Left Hand Tilt (↖️ vs ↗️)</span>
+              <span class="text-zinc-400">Minor vs Major Quality</span>
+            </div>
+            <div class="flex justify-between py-1 border-b border-zinc-800/80">
+              <span>Right Hand 1 - 4 Fingers</span>
+              <span class="text-zinc-400">Root, 1st Inv, 7th, Dom/Dim</span>
+            </div>
+            <div class="flex justify-between py-1 border-b border-zinc-800/80">
+              <span>Hand Height</span>
+              <span class="text-zinc-400">Volume (Higher = Louder)</span>
+            </div>
+            <div class="flex justify-between py-1 border-b border-zinc-800/80">
+              <span>Tilt Angle / Horizontal</span>
+              <span class="text-zinc-400">Lowpass Filter Sweep & Q</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Keyboard Shortcuts -->
+        <div class="text-xs text-zinc-400 bg-zinc-900 p-3 rounded-2xl border border-zinc-800">
+          <div class="font-bold text-zinc-200 mb-1">Keyboard Shortcuts:</div>
+          <div>• <strong>1 - 7:</strong> Select Degrees I - VII</div>
+          <div>• <strong>M:</strong> Toggle Major / Minor</div>
+          <div>• <strong>Q, W, E, R:</strong> Voicing (Root, 1st, 7th, Dom)</div>
+          <div>• <strong>S:</strong> Toggle Synth Shaping Rack</div>
+          <div>• <strong>K:</strong> Toggle Keyboard Bar</div>
+          <div>• <strong>Z, X, C:</strong> Octave (-1, +1, reset)</div>
+          <div>• <strong>↑ / ↓:</strong> Volume Up / Down</div>
+          <div>• <strong>← / →:</strong> Filter Cutoff Sweep</div>
+          <div>• <strong>Space:</strong> Mute / Unmute</div>
+        </div>
+
+        <div class="mt-5 flex justify-end">
+          <button
+            type="button"
+            (click)="closeHelp()"
+            class="px-5 py-2 rounded-xl bg-amber-400 text-black font-bold text-xs hover:bg-amber-300 cursor-pointer"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+</main>

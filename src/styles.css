@@ -1,0 +1,70 @@
+@import url('https://fonts.googleapis.com/icon?family=Material+Icons');
+@import "tailwindcss";
+
+:root {
+  --color-amber-gold: #e8a13d;
+  --color-bg-dark: #0e0e11;
+  --color-surface-panel: #16161a;
+  --color-border-subtle: #2b261e;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  width: 100%;
+  background-color: var(--color-bg-dark);
+  color: #f0f0f0;
+  font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Custom scrollbar for modals */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #141416;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-amber-gold);
+}
+
+/* LED style segmented meter */
+.vol-led {
+  transition: all 0.08s ease;
+  background-color: #222226;
+}
+
+.vol-led.active {
+  background-color: var(--color-amber-gold);
+  box-shadow: 0 0 10px rgba(232, 161, 61, 0.6);
+}
+
+/* Glow effects */
+.glow-amber {
+  text-shadow: 0 0 15px rgba(232, 161, 61, 0.5), 0 0 30px rgba(232, 161, 61, 0.2);
+}
+
+.glow-box-amber {
+  box-shadow: 0 0 20px rgba(232, 161, 61, 0.15), inset 0 0 12px rgba(232, 161, 61, 0.05);
+}
+
+.glow-cyan {
+  text-shadow: 0 0 15px rgba(100, 200, 250, 0.5);
+}
+
+/* Wave canvas animation */
+canvas#overlay {
+  image-rendering: auto;
+}

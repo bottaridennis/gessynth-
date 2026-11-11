@@ -1,0 +1,6 @@
+{
+  "name": "Gesture Synth",
+  "description": "Interactive gesture-controlled synthesizer recreating Gesture Synth. Play expressive chords, basslines, and harmonies with webcam hand tracking or virtual hands simulator.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
