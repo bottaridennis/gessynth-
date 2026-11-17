@@ -1,0 +1,114 @@
+{
+  "configVersion": 1,
+  "timestamp": 1794923497712,
+  "index": "./index.csr.html",
+  "assetGroups": [
+    {
+      "name": "app",
+      "installMode": "prefetch",
+      "updateMode": "prefetch",
+      "cacheQueryOptions": {
+        "ignoreVary": true
+      },
+      "urls": [
+        "./chunk-2NFLSA4Y.js",
+        "./chunk-XGTZPJ53.js",
+        "./favicon.svg",
+        "./index.csr.html",
+        "./index.html",
+        "./main-J454SAXC.js",
+        "./manifest.webmanifest",
+        "./styles-SICFCMVB.css"
+      ],
+      "patterns": []
+    },
+    {
+      "name": "icons",
+      "installMode": "lazy",
+      "updateMode": "prefetch",
+      "cacheQueryOptions": {
+        "ignoreVary": true
+      },
+      "urls": [
+        "./icons/apple-touch-icon.png",
+        "./icons/favicon-32.png",
+        "./icons/icon-192.png",
+        "./icons/icon-512.png",
+        "./icons/icon.svg",
+        "./icons/maskable-512.png",
+        "./icons/maskable.svg"
+      ],
+      "patterns": []
+    },
+    {
+      "name": "hand-tracking-runtime",
+      "installMode": "lazy",
+      "updateMode": "lazy",
+      "cacheQueryOptions": {
+        "ignoreVary": true
+      },
+      "urls": [
+        "./mediapipe/wasm/vision_wasm_internal.js",
+        "./mediapipe/wasm/vision_wasm_internal.wasm",
+        "./mediapipe/wasm/vision_wasm_nosimd_internal.js",
+        "./mediapipe/wasm/vision_wasm_nosimd_internal.wasm"
+      ],
+      "patterns": []
+    }
+  ],
+  "dataGroups": [
+    {
+      "name": "hand-tracking-model",
+      "patterns": [
+        "https:\\/\\/storage\\.googleapis\\.com\\/mediapipe-models\\/.*"
+      ],
+      "strategy": "performance",
+      "maxSize": 2,
+      "maxAge": 2592000000,
+      "cacheQueryOptions": {
+        "ignoreVary": true
+      },
+      "version": 1
+    }
+  ],
+  "hashTable": {
+    "./chunk-2NFLSA4Y.js": "a26cd3e959939fe26b8cfc160ad681ba7b6b4468",
+    "./chunk-XGTZPJ53.js": "ab0746b18cb68b87686c3511d6f31ca9aad5b817",
+    "./favicon.svg": "be83dd383169782e8135ddf706a6c5a00a4e008c",
+    "./icons/apple-touch-icon.png": "e64f2ba10aec50a781f6df6e684b6e788be786ea",
+    "./icons/favicon-32.png": "7b1d9e2949c3e25bb75799909132ce54687e05a6",
+    "./icons/icon-192.png": "61aecfe1ff3543b931c28e24236200e23cd89047",
+    "./icons/icon-512.png": "a404a50afef160ae900a402933709b4b692ad116",
+    "./icons/icon.svg": "be83dd383169782e8135ddf706a6c5a00a4e008c",
+    "./icons/maskable-512.png": "4be247ef7fcf76daaf7920fa8b6fd022b265390b",
+    "./icons/maskable.svg": "840070c0887b4fa5c10c7f40d036b524825641d9",
+    "./index.csr.html": "4e377b20c44cd8ef20538aabafb1bf1046b4aeac",
+    "./index.html": "282b18f63bb57e8cd9b5ea54c4c5bdd8516de152",
+    "./main-J454SAXC.js": "ed9223b48af9e4f704cce807667a6793826fc561",
+    "./manifest.webmanifest": "a346c299d33a8c6ca61937be0ec35458e063fdd5",
+    "./mediapipe/wasm/vision_wasm_internal.js": "16000b2837bb0818f0b4ce3c0d78493903fe6de9",
+    "./mediapipe/wasm/vision_wasm_internal.wasm": "630b9aabd438ab193cc2651616eed46f94d13930",
+    "./mediapipe/wasm/vision_wasm_nosimd_internal.js": "52166044092c29f834ab7adc0603be78d4961c7e",
+    "./mediapipe/wasm/vision_wasm_nosimd_internal.wasm": "905dc2f6293b9a3360bdcc54a24feed6fb811cf8",
+    "./styles-SICFCMVB.css": "ab53ad28129f4e196484146398a353fef2502508"
+  },
+  "navigationUrls": [
+    {
+      "positive": true,
+      "regex": "^\\/.*$"
+    },
+    {
+      "positive": false,
+      "regex": "^\\/(?:.+\\/)?[^/]*\\.[^/]*$"
+    },
+    {
+      "positive": false,
+      "regex": "^\\/(?:.+\\/)?[^/]*__[^/]*$"
+    },
+    {
+      "positive": false,
+      "regex": "^\\/(?:.+\\/)?[^/]*__[^/]*\\/.*$"
+    }
+  ],
+  "navigationRequestStrategy": "performance"
+}
