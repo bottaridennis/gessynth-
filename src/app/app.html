@@ -1,972 +1,634 @@
-<main class="relative w-screen h-screen overflow-hidden bg-[#0c0c0f] text-[#f4f4f5] select-none font-mono">
-  <!-- Video element for MediaPipe (invisible in DOM, rendered via canvas) -->
-  <video
-    #webcamVideo
-    class="absolute top-0 left-0 w-1 h-1 opacity-0 pointer-events-none -z-50"
-    playsinline
-    muted
-    autoplay
-    aria-hidden="true"
-  ></video>
+<!-- Hidden webcam feed for hand tracking (drawn mirrored on the canvas) -->
+<video #webcamVideo class="absolute top-0 left-0 w-px h-px opacity-0 pointer-events-none" playsinline muted autoplay aria-hidden="true"></video>
 
-  <!-- Canvas rendering camera background, hand skeleton & reactive waveforms -->
-  <canvas
-    #overlayCanvas
-    class="absolute inset-0 w-full h-full z-0 block"
-    aria-label="Gesture Synth interactive visualizer canvas"
-  ></canvas>
+<!-- Camera image, hand skeletons and live oscilloscope -->
+<canvas #overlayCanvas class="absolute inset-0 w-full h-full block" aria-hidden="true"></canvas>
 
-  <!-- TOP BAR: MODERN MINIMAL CONTROLS -->
-  <header class="absolute top-2 left-2 right-2 z-30 flex flex-col gap-1.5 pointer-events-none">
-    <!-- Row 1: Key, Scale & Global Actions -->
-    <div class="flex items-center justify-between gap-1.5 w-full pointer-events-auto">
-      <div class="flex items-center gap-1.5 flex-wrap">
-        <!-- Key Selector -->
-        <label class="sr-only" for="key-selector">Select Musical Key</label>
-        <select
-          id="key-selector"
-          [value]="selectedKey()"
-          (change)="onKeyChange($event)"
-          class="bg-zinc-950/90 text-amber-400 border border-zinc-800/90 rounded-lg px-2 py-1 text-[11px] sm:text-xs font-mono font-semibold hover:border-amber-500/80 focus:outline-none focus:ring-1 focus:ring-amber-500 cursor-pointer shadow-lg backdrop-blur-md transition-all"
-          title="Root Key Signature"
-        >
-          @for (k of keysList; track k) {
-            <option [value]="k" class="bg-zinc-900 text-zinc-100">Key: {{ k }}</option>
-          }
-        </select>
-
-        <!-- Scale Mode Selector (10 Musical Scales) -->
-        <label class="sr-only" for="scale-selector">Select Musical Scale Mode</label>
-        <select
-          id="scale-selector"
-          [value]="selectedScaleMode()"
-          (change)="onScaleModeChange($event)"
-          class="bg-zinc-950/90 text-amber-300 border border-zinc-800/90 rounded-lg px-2 py-1 text-[11px] sm:text-xs font-mono font-semibold hover:border-amber-500/80 focus:outline-none focus:ring-1 focus:ring-amber-500 cursor-pointer shadow-lg backdrop-blur-md transition-all"
-          title="Musical Scale Mode"
-        >
-          @for (m of scaleModesList; track m.id) {
-            <option [value]="m.id" class="bg-zinc-900 text-zinc-100">{{ m.name }}</option>
-          }
-        </select>
-      </div>
-
-      <!-- Right Group: Audio Controls, Tutorial, and Help -->
-      <div class="flex items-center gap-1 sm:gap-1.5">
-        <!-- Mute Toggle Button -->
-        <button
-          type="button"
-          (click)="toggleMute()"
-          class="bg-zinc-950/90 border border-zinc-800/90 hover:border-zinc-700 text-zinc-300 hover:text-amber-400 rounded-lg p-1.5 sm:p-2 text-xs flex items-center justify-center cursor-pointer shadow-lg backdrop-blur-md transition-all"
-          [title]="isAudioMuted() ? 'Unmute Audio (Space)' : 'Mute Audio (Space)'"
-          [attr.aria-label]="isAudioMuted() ? 'Unmute' : 'Mute'"
-        >
-          <mat-icon class="!text-sm sm:!text-base !w-4 !h-4 leading-none">
-            {{ isAudioMuted() ? 'volume_off' : 'volume_up' }}
-          </mat-icon>
-        </button>
-
-        <!-- Interactive Tutorial Button -->
-        <button
-          type="button"
-          (click)="openTutorial()"
-          class="bg-zinc-950/90 border border-zinc-800/90 hover:border-zinc-700 text-amber-400 rounded-lg px-2 py-1 text-[11px] sm:text-xs font-mono flex items-center gap-1 cursor-pointer shadow-lg backdrop-blur-md transition-all"
-          title="Interactive Tutorial"
-        >
-          <mat-icon class="!text-xs sm:!text-sm !w-3.5 sm:!w-4 !h-3.5 sm:!h-4 leading-none">school</mat-icon>
-          <span class="hidden sm:inline">Tutorial</span>
-        </button>
-
-        <!-- Help & Theory Button -->
-        <button
-          type="button"
-          (click)="openHelp()"
-          class="bg-zinc-950/90 border border-zinc-800/90 hover:border-zinc-700 text-amber-400 rounded-lg w-7 h-7 sm:w-8 sm:h-8 flex items-center justify-center text-xs font-bold font-mono cursor-pointer shadow-lg backdrop-blur-md transition-all"
-          title="Settings & Guide (?)"
-          aria-label="Settings and music theory help"
-        >
-          ?
-        </button>
-      </div>
+<!-- Reusable: schematic gesture guide (side panel on desktop, bottom sheet on phones) -->
+<ng-template #guideTpl>
+  <section aria-labelledby="guide-left">
+    <div class="flex items-center justify-between">
+      <h3 id="guide-left" class="eyebrow">Mano sinistra · accordo</h3>
+      <span class="text-[11px] text-muted">Tasti 1–7</span>
     </div>
-
-    <!-- Row 2: Preset Selector, Synth Rack & Modes -->
-    <div class="flex items-center gap-1 sm:gap-1.5 pointer-events-auto overflow-x-auto w-full pb-0.5">
-      <!-- Instrument Preset Selector (14 Timbral Presets) -->
-      <label class="sr-only" for="preset-selector">Select Instrument Tone</label>
-      <select
-        id="preset-selector"
-        [value]="selectedPreset()"
-        (change)="onToneChange($event)"
-        class="bg-zinc-950/90 text-amber-400 border border-zinc-800/90 rounded-lg px-2 py-1 text-[11px] sm:text-xs font-mono font-semibold hover:border-amber-500/80 focus:outline-none focus:ring-1 focus:ring-amber-500 cursor-pointer shadow-lg backdrop-blur-md transition-all shrink-0"
-        title="Instrument Sound Preset"
-      >
-        @for (p of presetsList; track p.id) {
-          <option [value]="p.id" class="bg-zinc-900 text-zinc-100">{{ p.name }}</option>
-        }
-      </select>
-
-      <!-- Custom Sound Shaping Rack Button -->
-      <button
-        type="button"
-        (click)="toggleSoundRack()"
-        class="border rounded-lg px-2 py-1 text-[11px] sm:text-xs font-mono font-medium flex items-center gap-1 cursor-pointer shadow-lg backdrop-blur-md transition-all shrink-0"
-        [class]="soundRackOpen() ? 'bg-amber-500/20 border-amber-500 text-amber-300 shadow-amber-500/10' : 'bg-zinc-950/90 border-zinc-800/90 text-zinc-300 hover:text-amber-400 hover:border-zinc-700'"
-        title="Customize Sound & Synth Rack [S]"
-        [attr.aria-expanded]="soundRackOpen()"
-        aria-controls="sound-rack-drawer"
-      >
-        <mat-icon class="!text-xs sm:!text-sm !w-3.5 sm:!w-4 !h-3.5 sm:!h-4 leading-none">tune</mat-icon>
-        <span class="hidden sm:inline">Synth Rack</span>
-        <span class="text-[9px] sm:text-[10px] text-zinc-400 font-normal">[S]</span>
-      </button>
-
-      <!-- Gesture Guide Toggle Button -->
-      <button
-        type="button"
-        (click)="toggleGuide()"
-        class="bg-zinc-950/90 border border-zinc-800/90 hover:border-zinc-700 text-zinc-300 hover:text-amber-400 rounded-lg px-2 py-1 text-[11px] sm:text-xs font-mono font-medium flex items-center gap-1 cursor-pointer shadow-lg backdrop-blur-md transition-all shrink-0"
-        [attr.aria-expanded]="guideVisible()"
-        aria-controls="gesture-guide"
-        title="Toggle Gesture Reference Guide"
-      >
-        <mat-icon class="!text-xs sm:!text-sm !w-3.5 sm:!w-4 !h-3.5 sm:!h-4 leading-none">menu_book</mat-icon>
-        <span class="hidden sm:inline">{{ guideVisible() ? 'Hide Guide' : 'Open Guide' }}</span>
-      </button>
-
-      <!-- Camera / Virtual Simulator Toggle -->
-      <button
-        type="button"
-        (click)="toggleCameraMode()"
-        [disabled]="cameraStatus() === 'requesting'"
-        class="border rounded-lg px-2 py-1 text-[11px] sm:text-xs font-mono font-medium flex items-center gap-1 cursor-pointer shadow-lg backdrop-blur-md transition-all shrink-0"
-        [class]="cameraStatus() === 'active' ? 'bg-emerald-950/80 border-emerald-500/60 text-emerald-300' : 'bg-zinc-950/90 border-zinc-800/90 text-zinc-300 hover:text-amber-400 hover:border-zinc-700'"
-        [title]="cameraStatus() === 'active' ? 'Webcam active (click to use Virtual Simulator)' : cameraStatus() === 'requesting' ? 'Starting webcam & hand tracking…' : 'Using Virtual Simulator (click for Webcam)'"
-      >
-        <mat-icon class="!text-xs sm:!text-sm !w-3.5 sm:!w-4 !h-3.5 sm:!h-4 leading-none">
-          {{ cameraStatus() === 'active' ? 'videocam' : 'videocam_off' }}
-        </mat-icon>
-        <span class="hidden sm:inline">
-          {{ cameraStatus() === 'active' ? 'Cam' : cameraStatus() === 'requesting' ? 'Loading…' : 'Virtual' }}
-        </span>
-      </button>
-
-      <!-- Keyboard Bar Toggle -->
-      <button
-        type="button"
-        (click)="toggleKeyboardBar()"
-        class="border rounded-lg px-2 py-1 text-[11px] sm:text-xs font-mono font-medium flex items-center gap-1 cursor-pointer shadow-lg backdrop-blur-md transition-all shrink-0"
-        [class]="keyboardBarVisible() ? 'bg-amber-500/20 border-amber-500 text-amber-300' : 'bg-zinc-950/90 border-zinc-800/90 text-zinc-400 hover:text-zinc-200'"
-        title="Toggle Keyboard Bar [K]"
-      >
-        <mat-icon class="!text-xs sm:!text-sm !w-3.5 sm:!w-4 !h-3.5 sm:!h-4 leading-none">keyboard</mat-icon>
-        <span class="hidden sm:inline">Tasti [K]</span>
-      </button>
-    </div>
-  </header>
-
-  <!-- SOUND SHAPING STUDIO / SYNTH RACK DRAWER -->
-  @if (soundRackOpen()) {
-    <aside
-      id="sound-rack-drawer"
-      class="absolute top-24 right-2.5 z-40 bg-zinc-950/95 border border-zinc-800/90 rounded-2xl p-4 shadow-2xl backdrop-blur-xl w-[92vw] sm:w-84 max-h-[calc(100dvh-7rem)] overflow-y-auto"
-      role="region"
-      aria-labelledby="rack-heading"
-    >
-      <!-- Header -->
-      <div class="flex items-center justify-between border-b border-zinc-800/90 pb-2.5 mb-3">
-        <div class="flex items-center gap-2">
-          <mat-icon class="text-amber-400 !text-lg !w-5 !h-5">tune</mat-icon>
-          <div>
-            <h2 id="rack-heading" class="text-xs font-bold uppercase tracking-wider text-amber-300">
-              Synth Shaping Rack
-            </h2>
-            <div class="text-[10px] text-zinc-400">Tone, ADSR, Filter & Space</div>
-          </div>
-        </div>
-        <div class="flex items-center gap-1">
+    <ul class="mt-2 flex flex-col gap-1">
+      @for (d of degreeItems(); track d.roman) {
+        <li>
           <button
             type="button"
-            (click)="resetSoundParams()"
-            class="text-[10px] text-zinc-400 hover:text-amber-400 p-1 rounded hover:bg-zinc-900 transition-colors flex items-center gap-1"
-            title="Reset to preset defaults"
+            class="w-full flex items-center gap-3 rounded-xl px-2 py-1.5 text-left border transition-colors"
+            [class]="activeDegree() === d.roman ? 'bg-surface-2 border-line' : 'border-transparent hover:bg-surface-2/60'"
+            [attr.aria-pressed]="activeDegree() === d.roman"
+            (click)="setVirtualDegree(d.roman)"
           >
-            <mat-icon class="!text-xs !w-3.5 !h-3.5">restart_alt</mat-icon>
-            <span>Reset</span>
+            <app-hand-gesture [shape]="d.gesture.shape" [size]="36" [accent]="d.color" [label]="d.gesture.label" />
+            <span class="w-9 text-sm font-bold" [style.color]="d.color">{{ d.roman }}</span>
+            <span class="flex-1 min-w-0">
+              <span class="block font-semibold leading-tight">{{ d.chord }}</span>
+              <span class="block text-xs text-muted leading-tight truncate">{{ d.gesture.label }}</span>
+            </span>
+            <kbd>{{ d.number }}</kbd>
           </button>
-          <button
-            type="button"
-            (click)="closeSoundRack()"
-            class="text-zinc-400 hover:text-zinc-100 p-1 rounded hover:bg-zinc-900"
-            aria-label="Close synth rack"
-          >
-            <mat-icon class="!text-sm !w-4 !h-4">close</mat-icon>
-          </button>
-        </div>
-      </div>
-
-      <div class="space-y-3.5 text-xs">
-        <!-- Waveform Selector -->
-        <div>
-          <div class="text-[10px] font-bold text-zinc-400 uppercase tracking-wider mb-1.5 flex justify-between">
-            <span>Waveform Core</span>
-            <span class="text-amber-400">{{ customParams().waveform }}</span>
-          </div>
-          <div class="grid grid-cols-5 gap-1 bg-zinc-900/80 p-1 rounded-lg border border-zinc-800">
-            @for (w of waveformsList; track w) {
-              <button
-                type="button"
-                (click)="setWaveform(w)"
-                class="py-1 text-[10px] rounded capitalize transition-all font-mono cursor-pointer"
-                [class]="customParams().waveform === w ? 'bg-amber-400 text-black font-bold shadow' : 'text-zinc-400 hover:text-zinc-200'"
-              >
-                {{ w }}
-              </button>
-            }
-          </div>
-        </div>
-
-        <!-- Envelope Section: Attack & Release -->
-        <div class="space-y-2.5 bg-zinc-900/50 p-2.5 rounded-xl border border-zinc-850">
-          <div class="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Envelope (ADSR)</div>
-
-          <!-- Attack -->
-          <div>
-            <div class="flex justify-between text-[11px] mb-1">
-              <span class="text-zinc-400">Attack Time</span>
-              <span class="text-amber-300 font-mono">{{ Math.round(customParams().attack * 1000) }} ms</span>
-            </div>
-            <input
-              type="range"
-              min="0.005"
-              max="0.6"
-              step="0.005"
-              [value]="customParams().attack"
-              (input)="setCustomParam('attack', +$any($event.target).value)"
-              class="w-full accent-amber-400 bg-zinc-800 rounded-lg h-1.5 cursor-pointer"
-            />
-          </div>
-
-          <!-- Release -->
-          <div>
-            <div class="flex justify-between text-[11px] mb-1">
-              <span class="text-zinc-400">Release Tail</span>
-              <span class="text-amber-300 font-mono">{{ Math.round(customParams().release * 1000) }} ms</span>
-            </div>
-            <input
-              type="range"
-              min="0.05"
-              max="2.0"
-              step="0.01"
-              [value]="customParams().release"
-              (input)="setCustomParam('release', +$any($event.target).value)"
-              class="w-full accent-amber-400 bg-zinc-800 rounded-lg h-1.5 cursor-pointer"
-            />
-          </div>
-        </div>
-
-        <!-- Filter & Tone Section -->
-        <div class="space-y-2.5 bg-zinc-900/50 p-2.5 rounded-xl border border-zinc-850">
-          <div class="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Filter & Resonance</div>
-
-          <!-- Cutoff -->
-          <div>
-            <div class="flex justify-between text-[11px] mb-1">
-              <span class="text-zinc-400">Base Cutoff</span>
-              <span class="text-amber-300 font-mono">{{ customParams().cutoff }} Hz</span>
-            </div>
-            <input
-              type="range"
-              min="200"
-              max="10000"
-              step="50"
-              [value]="customParams().cutoff"
-              (input)="setCustomParam('cutoff', +$any($event.target).value)"
-              class="w-full accent-amber-400 bg-zinc-800 rounded-lg h-1.5 cursor-pointer"
-            />
-          </div>
-
-          <!-- Resonance (Q) -->
-          <div>
-            <div class="flex justify-between text-[11px] mb-1">
-              <span class="text-zinc-400">Resonance (Q)</span>
-              <span class="text-amber-300 font-mono">{{ customParams().resonance.toFixed(1) }}</span>
-            </div>
-            <input
-              type="range"
-              min="0.4"
-              max="3.8"
-              step="0.1"
-              [value]="customParams().resonance"
-              (input)="setCustomParam('resonance', +$any($event.target).value)"
-              class="w-full accent-amber-400 bg-zinc-800 rounded-lg h-1.5 cursor-pointer"
-            />
-          </div>
-        </div>
-
-        <!-- Space, Detune & Sub Section -->
-        <div class="space-y-2.5 bg-zinc-900/50 p-2.5 rounded-xl border border-zinc-850">
-          <div class="text-[10px] font-bold text-zinc-400 uppercase tracking-wider">Space & Harmonics</div>
-
-          <!-- Reverb / Space -->
-          <div>
-            <div class="flex justify-between text-[11px] mb-1">
-              <span class="text-zinc-400">Space / Reverb</span>
-              <span class="text-amber-300 font-mono">{{ Math.round(customParams().reverb * 100) }}%</span>
-            </div>
-            <input
-              type="range"
-              min="0.0"
-              max="0.8"
-              step="0.02"
-              [value]="customParams().reverb"
-              (input)="setCustomParam('reverb', +$any($event.target).value)"
-              class="w-full accent-amber-400 bg-zinc-800 rounded-lg h-1.5 cursor-pointer"
-            />
-          </div>
-
-          <!-- Detune / Chorus -->
-          <div>
-            <div class="flex justify-between text-[11px] mb-1">
-              <span class="text-zinc-400">Stereo Detune</span>
-              <span class="text-amber-300 font-mono">{{ customParams().detune }} cents</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="30"
-              step="1"
-              [value]="customParams().detune"
-              (input)="setCustomParam('detune', +$any($event.target).value)"
-              class="w-full accent-amber-400 bg-zinc-800 rounded-lg h-1.5 cursor-pointer"
-            />
-          </div>
-
-          <!-- Sub-Oscillator Toggle -->
-          <div class="flex items-center justify-between pt-1 border-t border-zinc-800">
-            <div>
-              <div class="text-[11px] font-semibold text-zinc-200">Sub-Oscillator (-1 Oct)</div>
-              <div class="text-[10px] text-zinc-400">Adds deep sine bottom end</div>
-            </div>
-            <button
-              type="button"
-              (click)="setCustomParam('subOsc', !customParams().subOsc)"
-              class="px-2.5 py-1 text-[11px] rounded font-bold cursor-pointer transition-colors border"
-              [class]="customParams().subOsc ? 'bg-amber-400 border-amber-400 text-black' : 'bg-zinc-800 border-zinc-700 text-zinc-400'"
-            >
-              {{ customParams().subOsc ? 'ON' : 'OFF' }}
-            </button>
-          </div>
-        </div>
-      </div>
-    </aside>
-  }
-
-  <!-- LIVE GESTURE GUIDE HUD (Collapsible) -->
-  @if (guideVisible()) {
-    <aside
-      id="gesture-guide"
-      class="absolute top-24 left-2 sm:left-2.5 z-10 flex flex-row overflow-x-auto gap-2 max-w-[calc(100vw-16px)] pointer-events-none pb-1"
-      aria-label="Gesture reference guide"
-    >
-      <!-- LEFT HAND PANEL (Degrees I to VII with dynamic notes) -->
-      <div class="bg-zinc-950/85 border border-zinc-800/90 rounded-xl p-2.5 backdrop-blur-md shadow-2xl pointer-events-auto min-w-[135px]">
-        <div class="text-[10px] tracking-widest text-zinc-400 font-bold uppercase mb-1.5 flex items-center justify-between border-b border-zinc-800/80 pb-1">
-          <span>LEFT HAND</span>
-          <span class="text-[9px] text-amber-400/80">{{ selectedScaleMode() }}</span>
-        </div>
-
-        <div class="space-y-0.5">
-          @for (row of guideDegreeRows(); track row.degree) {
-            <div
-              class="flex items-center justify-between px-2 py-0.5 rounded text-xs transition-colors duration-100"
-              [class]="activeDegree() === row.roman ? 'bg-amber-400/20 text-amber-300 font-bold border border-amber-400/40' : 'text-zinc-400 hover:text-zinc-200'"
-            >
-              <span class="font-mono text-xs w-9 text-zinc-300">{{ row.name }}</span>
-              <span class="text-[10px] text-zinc-500 mr-auto ml-1">{{ row.roman }}</span>
-              <span class="text-sm leading-none">{{ row.gesture }}</span>
-            </div>
-          }
-
-          <!-- Mano Chiusa / Silenzio row -->
-          <div
-            class="flex items-center justify-between px-2 py-0.5 rounded text-xs transition-colors duration-100 border-t border-zinc-800/60 pt-1 mt-0.5"
-            [class]="isHandClosed() || (cameraStatus() === 'active' && handsDetected() && activeDegree() === null) ? 'bg-rose-500/25 text-rose-300 font-bold border border-rose-500/50' : 'text-zinc-500 hover:text-zinc-400'"
-          >
-            <span class="font-mono text-xs text-zinc-400">Silenzio</span>
-            <span class="text-[10px] text-zinc-500 mr-auto ml-1">0 dita</span>
-            <span class="text-sm leading-none">✊</span>
-          </div>
-        </div>
-
-        <!-- Tilt Indicator (Major vs Minor) -->
-        <div class="mt-2 pt-1.5 border-t border-zinc-800/80 flex gap-1 text-[10px]">
-          <div
-            class="flex-1 text-center py-1 rounded transition-colors"
-            [class]="!isMajor() && activeDegree() !== null ? 'bg-rose-500/25 text-rose-300 font-bold border border-rose-500/40' : 'text-zinc-500 bg-black/25'"
-          >
-            ↖️ Minor
-          </div>
-          <div
-            class="flex-1 text-center py-1 rounded transition-colors"
-            [class]="isMajor() && activeDegree() !== null ? 'bg-amber-400/25 text-amber-300 font-bold border border-amber-400/40' : 'text-zinc-500 bg-black/25'"
-          >
-            ↗️ Major
-          </div>
-        </div>
-      </div>
-
-      <!-- RIGHT HAND PANEL (Voicing & Inversions) -->
-      @if (isTwoHandedMode()) {
-        <div class="bg-zinc-950/85 border border-zinc-800/90 rounded-xl p-2.5 backdrop-blur-md shadow-2xl pointer-events-auto min-w-[130px]">
-          <div class="text-[10px] tracking-widest text-zinc-400 font-bold uppercase mb-1.5 flex items-center justify-between border-b border-zinc-800/80 pb-1">
-            <span>RIGHT HAND</span>
-            <span class="text-[9px] text-cyan-400/80">VOICING</span>
-          </div>
-
-          <div class="space-y-0.5">
-            @for (v of rightHandVoicings(); track v.index) {
-              <div
-                class="flex items-center justify-between px-2 py-0.5 rounded text-xs transition-colors duration-100"
-                [class]="voicingQuality() === v.index && activeDegree() !== null ? 'bg-cyan-500/20 text-cyan-300 font-bold border border-cyan-500/40' : 'text-zinc-400 hover:text-zinc-200'"
-              >
-                <span class="text-sm leading-none">{{ v.gesture }}</span>
-                <span class="text-xs text-right">{{ v.label }}</span>
-              </div>
-            }
-
-            <!-- Right hand closed / mute row -->
-            <div
-              class="flex items-center justify-between px-2 py-0.5 rounded text-xs transition-colors duration-100 border-t border-zinc-800/60 pt-1 mt-0.5"
-              [class]="isHandClosed() ? 'bg-rose-500/25 text-rose-300 font-bold border border-rose-500/50' : 'text-zinc-500 hover:text-zinc-400'"
-            >
-              <span class="text-sm leading-none">✊</span>
-              <span class="text-xs text-right">Mute / Stop</span>
-            </div>
-          </div>
-
-          <!-- Octave Indicator -->
-          <div class="mt-2 pt-1.5 border-t border-zinc-800/80">
-            <div class="text-[9px] text-zinc-400 tracking-wider uppercase mb-1 text-center">OCTAVE</div>
-            <div class="flex gap-1 text-[10px]">
-              <div
-                class="flex-1 text-center py-1 rounded transition-colors"
-                [class]="octaveShift() > 1.0 ? 'bg-cyan-500/25 text-cyan-300 font-bold border border-cyan-500/40' : 'text-zinc-500 bg-black/25'"
-              >
-                High
-              </div>
-              <div
-                class="flex-1 text-center py-1 rounded transition-colors"
-                [class]="octaveShift() === 1.0 ? 'bg-zinc-800 text-zinc-200 font-bold' : 'text-zinc-500 bg-black/25'"
-              >
-                Mid
-              </div>
-              <div
-                class="flex-1 text-center py-1 rounded transition-colors"
-                [class]="octaveShift() < 1.0 ? 'bg-cyan-500/25 text-cyan-300 font-bold border border-cyan-500/40' : 'text-zinc-500 bg-black/25'"
-              >
-                Low
-              </div>
-            </div>
-          </div>
-        </div>
+        </li>
       }
-    </aside>
-  }
+      <li class="flex items-center gap-3 px-2 py-1.5" [class.text-danger]="isHandClosed()">
+        <app-hand-gesture [shape]="fistGesture.shape" [size]="36" label="Pugno" />
+        <span class="flex-1">
+          <span class="block font-semibold leading-tight">Silenzio</span>
+          <span class="block text-xs text-muted leading-tight">Pugno chiuso o mano fuori campo</span>
+        </span>
+        <kbd>0</kbd>
+      </li>
+    </ul>
 
-  <!-- RIGHT SIDE: VOLUME METER & FILTER READOUT (shown when synth rack is closed) -->
-  @if (!soundRackOpen()) {
-    <aside class="absolute top-24 right-3 z-10 flex flex-col items-end gap-2.5 pointer-events-none" aria-label="Audio meters">
-      <!-- Volume LED Meter (8 Segments) -->
-      <div class="bg-zinc-950/85 border border-zinc-800/90 rounded-xl p-2 flex flex-col items-center gap-1 backdrop-blur-md shadow-xl pointer-events-auto">
-        <div class="text-[9px] font-bold text-zinc-400 tracking-wider">VOL</div>
-        <div class="flex flex-col-reverse gap-1 py-0.5">
-          @for (seg of [1, 2, 3, 4, 5, 6, 7, 8]; track seg) {
-            <div
-              class="w-5 h-2 rounded-xs vol-led"
-              [class.active]="volumeLedCount() >= seg"
-            ></div>
-          }
-        </div>
-        <div class="text-[9px] text-zinc-400">{{ Math.round(currentVolume() * 100) }}%</div>
+    <h3 class="eyebrow mt-4">Inclinazione · qualità</h3>
+    <div class="mt-2 grid grid-cols-2 gap-2">
+      <div class="rounded-xl border px-3 py-2 flex items-center gap-2" [class]="!isMajor() ? 'border-accent text-accent' : 'border-line text-muted'">
+        <app-icon name="tilt-left" [size]="18" /> <span class="text-sm font-semibold">Minore</span>
       </div>
-
-      <!-- Filter Frequency Indicator -->
-      <div class="hidden sm:block bg-zinc-950/85 border border-zinc-800/90 rounded-xl px-2.5 py-1.5 text-right backdrop-blur-md shadow-xl pointer-events-auto">
-        <div class="text-[9px] text-zinc-400 tracking-wider uppercase">FILTER CUTOFF</div>
-        <div class="text-xs font-bold text-amber-400 font-mono">{{ currentFilterFreq() }} Hz</div>
+      <div class="rounded-xl border px-3 py-2 flex items-center gap-2" [class]="isMajor() ? 'border-accent text-accent' : 'border-line text-muted'">
+        <app-icon name="tilt-right" [size]="18" /> <span class="text-sm font-semibold">Maggiore</span>
       </div>
-
-      <!-- Scale Mode Pill -->
-      <div class="hidden sm:block bg-zinc-950/85 border border-zinc-800/90 rounded-xl px-2.5 py-1 text-right backdrop-blur-md shadow-xl pointer-events-auto">
-        <div class="text-[9px] text-zinc-400 uppercase tracking-wider">SCALE</div>
-        <div class="text-xs font-semibold text-zinc-200 capitalize">{{ selectedScaleMode() }}</div>
-      </div>
-    </aside>
-  }
-
-  <!-- CENTER CHORD DISPLAY BADGE & SOUND REACTION -->
-  <section
-    class="absolute left-0 right-0 z-10 flex flex-col items-center justify-center pointer-events-none px-4 transition-all duration-200"
-    [class]="started() && keyboardBarVisible() ? 'bottom-48 sm:bottom-40' : 'bottom-6 sm:bottom-8'"
-  >
-    @if (cameraStatus() === 'active' && !handsDetected()) {
-      <!-- Silent / Waiting for Hands Badge -->
-      <div class="flex flex-col items-center gap-1 animate-pulse text-center">
-        <div class="px-3 py-1 rounded-full text-[10px] sm:text-xs font-mono font-semibold bg-zinc-950/90 border border-amber-500/40 text-amber-300 flex items-center gap-2 shadow-xl backdrop-blur-md">
-          <span class="w-2 h-2 rounded-full bg-amber-400 animate-ping"></span>
-          <span>SILENZIOSO • MOSTRA LE MANI PER SUONARE</span>
-        </div>
-        <div class="text-3xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-600 font-mono py-0.5 leading-none">
-          --
-        </div>
-        <div class="text-[10px] sm:text-xs text-zinc-400 font-mono">
-          Il suono si attiva solo con le mani inquadrate dalla webcam
-        </div>
-      </div>
-    } @else if (isHandClosed() || (cameraStatus() === 'active' && handsDetected() && activeDegree() === null)) {
-      <!-- Silent / Closed Hand (Fist) Badge -->
-      <div class="flex flex-col items-center gap-1 text-center">
-        <div class="px-3.5 py-1 rounded-full text-[10px] sm:text-xs font-mono font-bold bg-zinc-950/95 border border-rose-500/50 text-rose-300 flex items-center gap-2 shadow-2xl backdrop-blur-md">
-          <span class="text-base leading-none">✊</span>
-          <span>MANO CHIUSA • NESSUN SUONO (SILENZIO)</span>
-        </div>
-        <div class="text-3xl sm:text-6xl md:text-7xl font-bold tracking-tight text-zinc-600 font-mono py-0.5 leading-none">
-          --
-        </div>
-        <div class="text-[10px] sm:text-xs text-zinc-400 font-mono">
-          Apri 1-5 dita (o corna 🤘 / ILY 🤟) per riprodurre un accordo
-        </div>
-      </div>
-    } @else {
-      <!-- Quality Pill Tag -->
-      <div
-        class="text-[10px] sm:text-[11px] font-bold tracking-widest uppercase px-3 py-0.5 rounded-full mb-0.5 transition-all"
-        [class]="isMajor() ? 'text-amber-400 bg-amber-400/15 border border-amber-400/30' : 'text-rose-400 bg-rose-500/20 border border-rose-500/30'"
-      >
-        {{ isMajor() ? 'MAJOR' : 'MINOR' }}
-        {{ isMajor() ? '↗️' : '↖️' }}
-      </div>
-
-      <!-- Giant Glowing Chord Name -->
-      <div
-        class="text-3xl sm:text-6xl md:text-7xl font-bold tracking-tight text-center transition-all duration-150 py-0.5 leading-none"
-        [style.color]="activeDegreeColor()"
-        [class.glow-amber]="activeDegree() !== null"
-      >
-        {{ chordDisplayName() }}
-      </div>
-
-      <!-- Sub-info: Key, Scale Mode, Degree & Preset -->
-      <div class="text-[10px] sm:text-xs text-zinc-400 tracking-wider flex items-center gap-1.5 sm:gap-3 mt-1 flex-wrap justify-center">
-        <span>KEY: <strong class="text-zinc-200">{{ selectedKey() }}</strong></span>
-        <span>•</span>
-        <span>SCALE: <strong class="text-amber-300 capitalize">{{ selectedScaleMode() }}</strong></span>
-        <span>•</span>
-        <span>DEGREE: <strong class="text-zinc-200">{{ activeDegree() || '--' }}</strong></span>
-        <span class="hidden sm:inline">•</span>
-        <span class="hidden sm:inline">TONE: <strong class="text-zinc-200">{{ selectedPreset() }}</strong></span>
-      </div>
-    }
+    </div>
+    <p class="mt-1.5 text-xs text-muted">Con la tastiera: tasto <kbd>M</kbd></p>
   </section>
 
-  <!-- INTERACTIVE KEYBOARD & VIRTUAL STUDIO (Bottom Docked Toolbar) -->
-  @if (started() && keyboardBarVisible()) {
-    <section
-      class="absolute bottom-2.5 sm:bottom-3 left-1/2 -translate-x-1/2 z-20 bg-zinc-950/95 border border-zinc-800/90 rounded-2xl p-2.5 sm:p-3 shadow-2xl backdrop-blur-xl flex flex-col gap-2 max-w-[96vw] w-fit"
-      aria-label="Keyboard and virtual controls"
-    >
-      <div class="flex items-center justify-between text-[11px] text-amber-400 font-bold border-b border-zinc-800/80 pb-1.5">
-        <span class="flex items-center gap-1.5">
-          <mat-icon class="!text-sm !w-4 !h-4">keyboard</mat-icon>
-          Tastiera & Controlli Virtuali
-        </span>
-        <span class="text-[10px] text-zinc-400 font-normal">Tasti [1-7], [M], [Q-R], [Z/X], [0/Esc Ferma], [K], [S]</span>
+  @if (isTwoHandedMode()) {
+    <section class="mt-4" aria-labelledby="guide-right">
+      <div class="flex items-center justify-between">
+        <h3 id="guide-right" class="eyebrow">Mano destra · colore</h3>
+        <span class="text-[11px] text-muted">Tasti Q W E R</span>
       </div>
-
-      <!-- Left Hand Degree Buttons & Stop Button -->
-      <div class="flex items-center gap-1 overflow-x-auto py-0.5">
-        <span class="text-[10px] text-zinc-400 mr-1 shrink-0">Chords:</span>
-        @for (row of guideDegreeRows(); track row.degree) {
-          <button
-            type="button"
-            (click)="setVirtualDegree(row.roman)"
-            class="px-2.5 py-1 rounded-lg text-xs font-mono transition-all shrink-0 cursor-pointer"
-            [class]="activeDegree() === row.roman ? 'bg-amber-400 text-black font-bold shadow-md shadow-amber-500/20' : 'bg-zinc-900 text-zinc-300 hover:bg-zinc-800 border border-zinc-800'"
-            [title]="'Degree ' + row.roman + ' (' + row.name + ')'"
-          >
-            {{ row.gesture }} {{ row.name }} ({{ row.roman }})
-          </button>
-        }
-
-        <button
-          type="button"
-          (click)="stopVirtualSound()"
-          class="px-2.5 py-1 rounded-lg text-xs font-mono transition-all shrink-0 cursor-pointer border border-zinc-700 bg-zinc-900/90 text-zinc-400 hover:text-rose-400 hover:border-rose-500/50 flex items-center gap-1 ml-1"
-          title="Ferma il suono ora [0 o Esc]"
-        >
-          <span class="text-rose-400 leading-none">■</span>
-          <span>Ferma</span>
-        </button>
-      </div>
-
-      <!-- Mode & Voicing controls row -->
-      <div class="flex flex-wrap items-center gap-3 pt-1 border-t border-zinc-800/80 text-xs">
-        <!-- Major / Minor toggle -->
-        <button
-          type="button"
-          (click)="toggleVirtualMajorMinor()"
-          class="px-2.5 py-1 rounded-lg font-bold cursor-pointer transition-colors border"
-          [class]="isMajor() ? 'bg-amber-400/20 border-amber-400 text-amber-300' : 'bg-rose-500/20 border-rose-500 text-rose-300'"
-        >
-          {{ isMajor() ? '↗️ Major' : '↖️ Minor' }}
-        </button>
-
-        <!-- Voicing Buttons -->
-        <div class="flex items-center gap-1">
-          <span class="text-[10px] text-zinc-400 mr-0.5">Voicing:</span>
-          @for (v of rightHandVoicings(); track v.index) {
+      <ul class="mt-2 flex flex-col gap-1">
+        @for (v of voicingGestures; track v.index) {
+          <li>
             <button
               type="button"
+              class="w-full flex items-center gap-3 rounded-xl px-2 py-1.5 text-left border transition-colors"
+              [class]="voicingQuality() === v.index ? 'bg-surface-2 border-line' : 'border-transparent hover:bg-surface-2/60'"
+              [attr.aria-pressed]="voicingQuality() === v.index"
               (click)="setVirtualVoicing(v.index)"
-              class="px-2 py-0.5 rounded text-[11px] cursor-pointer transition-colors"
-              [class]="voicingQuality() === v.index ? 'bg-cyan-400 text-black font-bold shadow' : 'bg-zinc-900 text-zinc-300 hover:bg-zinc-800 border border-zinc-800'"
             >
-              {{ v.label }}
+              <app-hand-gesture [shape]="v.shape" side="right" [size]="36" accent="var(--color-right)" [label]="v.fingers" />
+              <span class="flex-1 min-w-0">
+                <span class="block font-semibold leading-tight">{{ isMajor() ? v.majorLabel : v.minorLabel }}</span>
+                <span class="block text-xs text-muted leading-tight truncate">{{ v.fingers }} · {{ v.description }}</span>
+              </span>
             </button>
-          }
-        </div>
-
-        <!-- Octave shift buttons -->
-        <div class="flex items-center gap-1 ml-auto">
-          <span class="text-[10px] text-zinc-400">Octave:</span>
-          <button
-            type="button"
-            (click)="setVirtualOctave(0.5)"
-            class="px-1.5 py-0.5 rounded text-[10px] cursor-pointer"
-            [class]="octaveShift() === 0.5 ? 'bg-cyan-400 text-black font-bold' : 'bg-zinc-900 text-zinc-300 border border-zinc-800'"
-          >
-            -1
-          </button>
-          <button
-            type="button"
-            (click)="setVirtualOctave(1.0)"
-            class="px-1.5 py-0.5 rounded text-[10px] cursor-pointer"
-            [class]="octaveShift() === 1.0 ? 'bg-zinc-200 text-black font-bold' : 'bg-zinc-900 text-zinc-300 border border-zinc-800'"
-          >
-            0
-          </button>
-          <button
-            type="button"
-            (click)="setVirtualOctave(2.0)"
-            class="px-1.5 py-0.5 rounded text-[10px] cursor-pointer"
-            [class]="octaveShift() === 2.0 ? 'bg-cyan-400 text-black font-bold' : 'bg-zinc-900 text-zinc-300 border border-zinc-800'"
-          >
-            +1
-          </button>
-        </div>
-      </div>
+          </li>
+        }
+      </ul>
+      <ul class="mt-3 grid gap-1.5 text-xs text-muted">
+        <li class="flex items-center gap-2"><app-icon name="arrow-up" [size]="16" /> Mano in alto: più volume</li>
+        <li class="flex items-center gap-2"><app-icon name="hand" [size]="16" /> Pollice in fuori: un’ottava sotto</li>
+      </ul>
     </section>
   }
+</ng-template>
 
-  <!-- START WELCOME MODAL OVERLAY -->
-  @if (!started()) {
-    <div
-      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="start-title"
-    >
-      <div class="bg-zinc-950 border border-zinc-800/90 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl text-center relative glow-box-amber">
-        <div class="text-xs font-bold tracking-widest text-amber-400 uppercase mb-2">GESTURE SYNTH STUDIO</div>
-        <h1 id="start-title" class="text-2xl sm:text-3xl font-bold mb-3 tracking-tight text-white">
-          make music with your hands 🙌
-        </h1>
-        <p class="text-sm text-zinc-300 mb-6 leading-relaxed">
-          Expressive polyphonic synthesizer controlled by hand gestures in your webcam, or through the built-in virtual keyboard & mouse studio.
+@if (started()) {
+  <div class="absolute inset-0 flex flex-col pointer-events-none">
+    <!-- ============================== TOP BAR ============================== -->
+    <header class="pointer-events-auto px-3 sm:px-4 pt-[max(0.75rem,env(safe-area-inset-top))] pb-2 flex flex-col gap-2">
+      <div class="flex items-center gap-2">
+        <div class="flex items-center gap-2.5 mr-auto min-w-0">
+          <svg viewBox="0 0 48 48" class="w-9 h-9 shrink-0" aria-hidden="true">
+            <defs>
+              <linearGradient id="logo-g" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#f5b544" />
+                <stop offset="1" stop-color="#f47298" />
+              </linearGradient>
+            </defs>
+            <rect width="48" height="48" rx="13" fill="#1c1f26" stroke="#2b2f38" />
+            <path d="M8 26c3.5 0 3.5-10 7-10s3.5 18 7 18 3.5-18 7-18 3.5 10 7 10h4" fill="none" stroke="url(#logo-g)" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+          <div class="hidden sm:block leading-tight min-w-0">
+            <h1 class="font-semibold tracking-tight">Gesture Synth</h1>
+            <p class="text-xs text-muted truncate">{{ keyLabel() }} · {{ scaleLabel() }}</p>
+          </div>
+        </div>
+
+        <div class="hidden lg:flex items-center gap-2">
+          <label class="sr-only" for="key-select">Tonalità</label>
+          <select id="key-select" class="select" [value]="selectedKey()" (change)="onKeyChange($event)">
+            @for (k of keysList; track k) {
+              <option [value]="k" [selected]="k === selectedKey()">{{ keyName(k) }}</option>
+            }
+          </select>
+          <label class="sr-only" for="scale-select">Scala</label>
+          <select id="scale-select" class="select" [value]="selectedScaleMode()" (change)="onScaleModeChange($event)">
+            @for (m of scaleModesList; track m.id) {
+              <option [value]="m.id" [selected]="m.id === selectedScaleMode()">{{ m.name }}</option>
+            }
+          </select>
+        </div>
+
+        <nav class="flex items-center gap-1.5 sm:gap-2" aria-label="Strumenti">
+          <button type="button" class="icon-btn" (click)="toggleSheet('library')" [attr.aria-expanded]="sheet() === 'library'" aria-controls="sheet" title="Libreria brani (L)">
+            <app-icon name="library" /><span class="hidden md:inline">Brani</span>
+          </button>
+          <button type="button" class="icon-btn" (click)="toggleGuide()" [attr.aria-pressed]="guideVisible() || sheet() === 'guide'" title="Guida ai gesti (G)">
+            <app-icon name="hand" /><span class="hidden md:inline">Gesti</span>
+          </button>
+          <button type="button" class="icon-btn" (click)="toggleSheet('sound')" [attr.aria-expanded]="sheet() === 'sound'" aria-controls="sheet" title="Suono e impostazioni (S)">
+            <app-icon name="sliders" /><span class="hidden md:inline">Suono</span>
+          </button>
+          <button
+            type="button"
+            class="icon-btn"
+            (click)="toggleCameraMode()"
+            [disabled]="cameraStatus() === 'requesting'"
+            [attr.aria-pressed]="cameraStatus() === 'active'"
+            [title]="cameraStatus() === 'active' ? 'Webcam attiva: passa a tastiera e touch' : 'Attiva la webcam'"
+          >
+            <app-icon [name]="cameraStatus() === 'active' ? 'camera' : 'camera-off'" />
+            <span class="hidden md:inline">{{ cameraStatus() === 'requesting' ? 'Avvio…' : cameraStatus() === 'active' ? 'Webcam' : 'Webcam off' }}</span>
+          </button>
+          <button type="button" class="icon-btn hidden sm:inline-flex" (click)="toggleMute()" [attr.aria-pressed]="isAudioMuted()" [attr.aria-label]="isAudioMuted() ? 'Riattiva audio' : 'Disattiva audio'" title="Audio (Spazio)">
+            <app-icon [name]="isAudioMuted() ? 'volume-off' : 'volume'" />
+          </button>
+          <button type="button" class="icon-btn" (click)="toggleSheet('help')" [attr.aria-expanded]="sheet() === 'help'" aria-controls="sheet" title="Istruzioni (H)">
+            <app-icon name="help" /><span class="hidden md:inline">Istruzioni</span>
+          </button>
+          @if (installer.canOfferInstall()) {
+            <button type="button" class="icon-btn hidden md:inline-flex" (click)="installApp()" title="Installa come app">
+              <app-icon name="download" /><span class="hidden xl:inline">Installa</span>
+            </button>
+          }
+        </nav>
+      </div>
+
+      <!-- Key & scale on small screens -->
+      <div class="flex lg:hidden gap-2">
+        <label class="sr-only" for="key-select-m">Tonalità</label>
+        <select id="key-select-m" class="select flex-1 min-w-0" [value]="selectedKey()" (change)="onKeyChange($event)">
+          @for (k of keysList; track k) {
+            <option [value]="k" [selected]="k === selectedKey()">{{ keyName(k) }}</option>
+          }
+        </select>
+        <label class="sr-only" for="scale-select-m">Scala</label>
+        <select id="scale-select-m" class="select flex-[1.4] min-w-0" [value]="selectedScaleMode()" (change)="onScaleModeChange($event)">
+          @for (m of scaleModesList; track m.id) {
+            <option [value]="m.id" [selected]="m.id === selectedScaleMode()">{{ m.name }}</option>
+          }
+        </select>
+      </div>
+    </header>
+
+    <!-- ============================ PRACTICE CARD ============================ -->
+    @if (practice(); as p) {
+      @let step = practiceStep();
+      <section class="pointer-events-auto mx-3 sm:mx-auto sm:w-full sm:max-w-2xl panel p-3 sm:p-4" aria-labelledby="practice-title">
+        <div class="flex items-start gap-3">
+          <div class="min-w-0 flex-1">
+            <p class="eyebrow">{{ p.kind === 'song' ? 'Brano' : 'Esercitazione' }} · passo {{ practiceIndex() + 1 }}/{{ p.steps.length }}</p>
+            <h2 id="practice-title" class="font-semibold truncate">{{ p.title }} <span class="text-muted font-normal">· {{ p.subtitle }}</span></h2>
+          </div>
+          @if (practiceLoops() > 0) {
+            <span class="chip shrink-0"><app-icon name="check" [size]="14" /> {{ practiceLoops() }} {{ practiceLoops() === 1 ? 'giro' : 'giri' }}</span>
+          }
+          <button type="button" class="icon-btn shrink-0" (click)="stopPractice()" aria-label="Chiudi esercizio">
+            <app-icon name="close" />
+          </button>
+        </div>
+
+        <!-- Chord strip -->
+        <ol class="mt-2.5 flex gap-1.5 overflow-x-auto pb-1 -mx-1 px-1" aria-label="Sequenza accordi">
+          @for (s of p.steps; track $index) {
+            <li>
+              <button
+                type="button"
+                class="min-w-11 h-11 px-2.5 rounded-xl border text-sm font-bold transition-colors"
+                [class]="$index === practiceIndex() ? 'bg-surface-2' : 'border-line bg-bg/40 text-muted'"
+                [style.border-color]="$index === practiceIndex() ? 'rgb(' + degreeColor(s.degree) + ')' : null"
+                [style.color]="$index === practiceIndex() ? 'rgb(' + degreeColor(s.degree) + ')' : null"
+                [attr.aria-current]="$index === practiceIndex() ? 'step' : null"
+                [attr.aria-label]="'Passo ' + ($index + 1) + ': ' + stepChordName(s)"
+                (click)="goToPracticeStep($index)"
+              >
+                {{ stepChordName(s) }}
+              </button>
+            </li>
+          }
+        </ol>
+
+        @if (step) {
+          <div class="mt-2 flex items-center gap-3 sm:gap-4">
+            <div class="relative shrink-0 rounded-2xl bg-bg/50 border border-line p-2" [style.color]="'rgb(' + degreeColor(step.degree) + ')'">
+              <app-hand-gesture
+                [shape]="degreeGestures[step.degree].shape"
+                [tilt]="step.major ? 1 : -1"
+                [size]="52"
+                [accent]="'rgb(' + degreeColor(step.degree) + ')'"
+                [label]="degreeGestures[step.degree].label + (step.major ? ', inclinata a destra' : ', inclinata a sinistra')"
+              />
+              @if (practiceHit()) {
+                <span class="absolute -top-2 -right-2 h-7 w-7 rounded-full bg-ok text-bg flex items-center justify-center" role="status" aria-label="Accordo giusto">
+                  <app-icon name="check" [size]="16" [stroke]="2.5" />
+                </span>
+              }
+            </div>
+            <div class="min-w-0 flex-1">
+              @if (step.title) {
+                <p class="font-semibold">{{ step.title }}</p>
+                <p class="text-sm text-muted leading-snug">{{ step.description }}</p>
+              } @else {
+                <p class="text-sm text-muted">{{ step.section }}</p>
+                <p class="flex items-baseline gap-2 flex-wrap">
+                  <span class="text-2xl font-bold" [style.color]="'rgb(' + degreeColor(step.degree) + ')'">{{ practiceStepChord() }}</span>
+                  <span class="text-sm text-muted">note {{ practiceStepNotes().join(' · ') }}</span>
+                </p>
+              }
+              <p class="mt-1 text-xs text-muted leading-snug">
+                {{ degreeGestures[step.degree].label }}, mano {{ step.major ? 'inclinata a destra' : 'inclinata a sinistra' }}
+                · tastiera <kbd>{{ romans.indexOf(step.degree) + 1 }}</kbd>
+                @if (!step.major) { + <kbd>M</kbd> minore }
+                @if (practiceNext(); as n) {
+                  <span class="hidden sm:inline"> · poi {{ stepChordName(n) }}</span>
+                }
+              </p>
+            </div>
+          </div>
+          @if (step.theory) {
+            <p class="mt-2 text-xs text-muted hidden sm:flex gap-1.5"><app-icon name="info" [size]="14" /> {{ step.theory }}</p>
+          }
+          @if (p.note && practiceIndex() === 0) {
+            <p class="mt-2 text-xs text-muted hidden sm:flex gap-1.5"><app-icon name="info" [size]="14" /> {{ p.note }}</p>
+          }
+        }
+
+        <div class="mt-3 flex items-center gap-2">
+          <button type="button" class="icon-btn" (click)="advancePractice(-1)" aria-label="Passo precedente"><app-icon name="skip-prev" [size]="18" /></button>
+          @if (p.kind === 'song') {
+            <button type="button" class="btn-secondary !min-h-11 flex-1 justify-center" (click)="toggleDemo()" [attr.aria-pressed]="demoPlaying()">
+              <app-icon [name]="demoPlaying() ? 'pause' : 'play'" [size]="18" />
+              {{ demoPlaying() ? 'Pausa' : 'Ascolta' }}<span class="hidden sm:inline">{{ demoPlaying() ? '' : ' il giro' }}</span>
+            </button>
+          }
+          <button type="button" class="btn-secondary !min-h-11 flex-1 justify-center" (click)="previewStep()">
+            <app-icon name="volume" [size]="18" /> Senti<span class="hidden sm:inline"> l’accordo</span>
+          </button>
+          <button type="button" class="icon-btn" (click)="advancePractice(1)" aria-label="Passo successivo"><app-icon name="skip-next" [size]="18" /></button>
+        </div>
+      </section>
+    }
+
+    <!-- ============================ STAGE ============================ -->
+    <div class="relative flex-1 min-h-0">
+      <!-- Desktop guide panel -->
+      @if (guideVisible()) {
+        <aside class="pointer-events-auto hidden lg:block absolute left-4 top-2 bottom-2 w-72 panel p-4 overflow-y-auto" aria-label="Guida ai gesti">
+          <ng-container [ngTemplateOutlet]="guideTpl" />
+        </aside>
+      }
+
+      <!-- Meters (desktop) -->
+      <aside class="pointer-events-auto hidden md:flex absolute right-4 top-2 w-44 panel p-3 flex-col gap-3" aria-label="Livelli">
+        <div>
+          <div class="flex justify-between text-xs"><span class="text-muted">Volume</span><span class="font-semibold tabular-nums">{{ volumePercent() }}%</span></div>
+          <div class="mt-1.5 h-1.5 rounded-full bg-line overflow-hidden"><div class="h-full bg-accent rounded-full transition-[width]" [style.width.%]="volumePercent()"></div></div>
+        </div>
+        <div>
+          <div class="flex justify-between text-xs"><span class="text-muted">Filtro</span><span class="font-semibold tabular-nums">{{ currentFilterFreq() }} Hz</span></div>
+          <div class="mt-1.5 h-1.5 rounded-full bg-line overflow-hidden"><div class="h-full bg-right rounded-full transition-[width]" [style.width.%]="(currentFilterFreq() - 200) / 48"></div></div>
+        </div>
+        <p class="text-[11px] text-muted leading-snug">
+          {{ cameraStatus() === 'active' ? 'Webcam attiva' : 'Tastiera e touch' }} · {{ isTwoHandedMode() ? 'due mani' : 'una mano' }}
+        </p>
+      </aside>
+
+      <!-- Chord display -->
+      <div class="absolute inset-0 flex-col items-center justify-center px-4 text-center" [class]="practice() ? 'hidden sm:flex' : 'flex'">
+        @if (demoPlaying()) {
+          <span class="chip mb-3"><app-icon name="play" [size]="12" /> Ascolto del giro</span>
+        } @else if (cameraStatus() === 'requesting') {
+          <span class="chip mb-3">Avvio webcam e riconoscimento mani…</span>
+        } @else if (cameraStatus() === 'active' && !handsDetected()) {
+          <span class="chip mb-3"><app-icon name="hand" [size]="14" /> Mostra le mani alla webcam</span>
+        } @else if (isHandClosed()) {
+          <span class="chip mb-3 !text-danger !border-danger/50">Silenzio · pugno chiuso</span>
+        } @else if (activeDegree()) {
+          <span class="chip mb-3">
+            <app-icon [name]="isMajor() ? 'tilt-right' : 'tilt-left'" [size]="14" /> {{ isMajor() ? 'Maggiore' : 'Minore' }} · grado {{ activeDegree() }}
+          </span>
+        }
+
+        <p
+          class="font-bold tracking-tight leading-none text-[clamp(3.5rem,14vw,8rem)]"
+          [style.color]="activeDegreeColor()"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          <span class="sr-only">Accordo: </span>{{ activeDegree() ? chordDisplayName() : '—' }}
         </p>
 
-        <div class="flex flex-col sm:flex-row gap-3 justify-center mb-6">
-          <button
-            type="button"
-            (click)="openTutorial()"
-            class="px-5 py-3 rounded-xl border border-zinc-700 bg-zinc-900 text-amber-400 font-bold text-sm hover:bg-zinc-800 transition-colors flex items-center justify-center gap-2 cursor-pointer"
-          >
-            <mat-icon class="!text-base !w-4 !h-4">menu_book</mat-icon>
-            <span>learn how to play</span>
-          </button>
-
-          <button
-            type="button"
-            (click)="startApp(false)"
-            class="px-6 py-3 rounded-xl bg-amber-400 text-black font-bold text-sm hover:bg-amber-300 transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer shadow-amber-400/20"
-          >
-            <mat-icon class="!text-base !w-4 !h-4">videocam</mat-icon>
-            <span>play with camera</span>
-          </button>
-        </div>
-
-        <button
-          type="button"
-          (click)="startApp(true)"
-          class="text-xs text-zinc-400 hover:text-zinc-200 underline cursor-pointer mb-4 block mx-auto"
-        >
-          or play with keyboard & mouse (no camera required)
-        </button>
-
-        <div class="text-[11px] text-zinc-500 border-t border-zinc-800/80 pt-3">
-          Camera tracking runs 100% locally in your browser via MediaPipe. No video leaves your device.
-        </div>
+        @if (chordNotes().length) {
+          <ul class="mt-4 flex gap-2" aria-label="Note dell'accordo">
+            @for (n of chordNotes(); track $index) {
+              <li class="h-10 min-w-10 px-2 rounded-xl bg-surface/80 border border-line flex items-center justify-center font-semibold">{{ n }}</li>
+            }
+          </ul>
+        } @else if (!practice()) {
+          <p class="mt-4 text-muted max-w-xs">
+            {{ cameraStatus() === 'active' ? 'Alza le dita della mano sinistra per suonare un accordo.' : 'Tocca un accordo qui sotto o premi i tasti da 1 a 7.' }}
+          </p>
+        }
       </div>
     </div>
-  }
 
-  <!-- INTERACTIVE TUTORIAL MODAL -->
-  @if (tutorialOpen()) {
-    <div
-      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="tutorial-heading"
-    >
-      <div class="bg-zinc-950 border border-zinc-800/90 rounded-3xl p-6 max-w-md w-full shadow-2xl relative">
-        <button
-          type="button"
-          (click)="closeTutorial()"
-          class="absolute top-4 right-4 text-zinc-400 hover:text-white p-1 cursor-pointer"
-          aria-label="Close tutorial"
-        >
-          <mat-icon class="!text-lg">close</mat-icon>
-        </button>
-
-        <!-- Progress step -->
-        <div class="text-xs font-bold text-amber-400 uppercase tracking-wider mb-1">
-          Tutorial Step {{ currentTutorialStep().step }} of {{ currentTutorialStep().totalSteps }}
-        </div>
-
-        <h2 id="tutorial-heading" class="text-xl font-bold mb-2 text-white">
-          {{ currentTutorialStep().title }}
-        </h2>
-
-        <p class="text-sm text-zinc-300 mb-4 leading-relaxed">
-          {{ currentTutorialStep().description }}
-        </p>
-
-        <!-- Visual Hand Guidance Box -->
-        <div class="bg-zinc-900 border border-zinc-800 rounded-2xl p-3.5 mb-4 space-y-2">
-          <div class="flex items-center justify-between text-xs">
-            <span class="text-zinc-400">Left Hand Goal:</span>
-            <span class="font-bold text-amber-400">{{ currentTutorialStep().leftHandGoal }}</span>
-          </div>
-          @if (currentTutorialStep().rightHandGoal) {
-            <div class="flex items-center justify-between text-xs border-t border-zinc-800 pt-1.5">
-              <span class="text-zinc-400">Right Hand Goal:</span>
-              <span class="font-bold text-cyan-400">{{ currentTutorialStep().rightHandGoal }}</span>
-            </div>
-          }
-        </div>
-
-        <!-- Music Theory Note -->
-        <div class="text-xs text-zinc-400 italic bg-zinc-900/60 p-3 rounded-xl border border-zinc-850 mb-5">
-          💡 {{ currentTutorialStep().theory }}
-        </div>
-
-        <!-- Goal Status Indicator -->
-        <div class="flex items-center justify-between mb-5">
-          <div class="flex items-center gap-2 text-xs">
-            @if (isTutorialStepSatisfied()) {
-              <span class="inline-flex items-center gap-1 text-emerald-400 font-bold">
-                <mat-icon class="!text-base !w-4 !h-4">check_circle</mat-icon>
-                Goal matched! Great job!
-              </span>
-            } @else {
-              <span class="inline-flex items-center gap-1 text-zinc-400">
-                <mat-icon class="!text-base !w-4 !h-4 animate-spin">autorenew</mat-icon>
-                Try the gesture or use Virtual Simulator buttons
-              </span>
+    <!-- ============================ PAD ============================ -->
+    @if (padVisible()) {
+      <section class="pointer-events-auto no-select px-3 sm:px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2" aria-label="Tastiera virtuale">
+        <div class="mx-auto max-w-3xl panel p-2.5 sm:p-3">
+          <div class="grid grid-cols-7 gap-1.5 sm:gap-2" role="group" aria-label="Accordi">
+            @for (d of degreeItems(); track d.roman) {
+              @let isTarget = practiceStep()?.degree === d.roman;
+              <button
+                type="button"
+                class="relative h-16 sm:h-[4.5rem] rounded-xl border bg-surface-2 flex flex-col items-center justify-center gap-0.5 transition-colors"
+                [class]="activeDegree() === d.roman ? '' : 'border-line hover:border-[#3b404c]'"
+                [style.border-color]="activeDegree() === d.roman || isTarget ? d.color : null"
+                [style.box-shadow]="activeDegree() === d.roman ? 'inset 0 -3px 0 ' + d.color : isTarget ? '0 0 0 2px ' + d.color : null"
+                [attr.aria-pressed]="activeDegree() === d.roman"
+                [attr.aria-label]="'Grado ' + d.roman + ', ' + d.chord + (isTarget ? ', accordo da suonare' : '')"
+                (click)="setVirtualDegree(d.roman)"
+              >
+                <span class="text-[11px] font-bold" [style.color]="d.color">{{ d.roman }}</span>
+                <span class="text-sm sm:text-base font-semibold leading-none">{{ d.chord }}</span>
+                <span class="hidden sm:block text-[10px] text-muted">{{ d.number }}</span>
+              </button>
             }
           </div>
+
+          <div class="mt-2 flex flex-wrap items-center gap-1.5 sm:gap-2">
+            <div class="seg" role="group" aria-label="Qualità">
+              <button type="button" class="seg-btn inline-flex items-center gap-1" [attr.aria-pressed]="isMajor()" (click)="setMajor(true)">
+                <span class="hidden sm:inline-flex"><app-icon name="tilt-right" [size]="15" /></span> Magg.
+              </button>
+              <button type="button" class="seg-btn inline-flex items-center gap-1" [attr.aria-pressed]="!isMajor()" (click)="setMajor(false)">
+                <span class="hidden sm:inline-flex"><app-icon name="tilt-left" [size]="15" /></span> Min.
+              </button>
+            </div>
+
+            @if (isTwoHandedMode()) {
+              <div class="seg" role="group" aria-label="Voicing">
+                @for (v of voicingGestures; track v.index) {
+                  <button type="button" class="seg-btn" [attr.aria-pressed]="voicingQuality() === v.index" [attr.aria-label]="isMajor() ? v.majorLabel : v.minorLabel" [title]="isMajor() ? v.majorLabel : v.minorLabel" (click)="setVirtualVoicing(v.index)">
+                    {{ v.index === 1 ? 'Base' : v.index === 2 ? 'Riv.' : isMajor() ? (v.index === 3 ? 'maj7' : '7') : v.index === 3 ? 'm7' : 'dim7' }}
+                  </button>
+                }
+              </div>
+            }
+
+            <div class="seg" role="group" aria-label="Ottava">
+              @for (o of octaves; track o.value) {
+                <button type="button" class="seg-btn tabular-nums" [attr.aria-pressed]="octaveShift() === o.value" [attr.aria-label]="'Ottava ' + o.label" (click)="setVirtualOctave(o.value)">{{ o.label }}</button>
+              }
+            </div>
+
+            <div class="ml-auto flex items-center gap-2">
+              <button type="button" class="icon-btn sm:hidden" (click)="toggleMute()" [attr.aria-pressed]="isAudioMuted()" [attr.aria-label]="isAudioMuted() ? 'Riattiva audio' : 'Disattiva audio'">
+                <app-icon [name]="isAudioMuted() ? 'volume-off' : 'volume'" />
+              </button>
+              <button type="button" class="icon-btn !text-danger" (click)="stopVirtualSound()" aria-label="Ferma il suono" title="Ferma (0 o Esc)">
+                <app-icon name="stop" [size]="16" />
+              </button>
+              <button type="button" class="icon-btn" (click)="togglePad()" aria-label="Nascondi tastiera virtuale" title="Nascondi (K)">
+                <app-icon name="arrow-down" [size]="18" />
+              </button>
+            </div>
+          </div>
         </div>
-
-        <!-- Navigation buttons -->
-        <div class="flex items-center justify-between gap-3">
-          <button
-            type="button"
-            (click)="prevTutorialStep()"
-            [disabled]="currentTutorialStepIndex() === 0"
-            class="px-4 py-2 rounded-xl text-xs border border-zinc-800 text-zinc-300 disabled:opacity-40 disabled:cursor-not-allowed hover:bg-zinc-800 cursor-pointer"
-          >
-            Previous
-          </button>
-
-          <button
-            type="button"
-            (click)="nextTutorialStep()"
-            class="px-5 py-2 rounded-xl text-xs font-bold bg-amber-400 text-black hover:bg-amber-300 cursor-pointer ml-auto"
-          >
-            {{ currentTutorialStepIndex() === tutorialSteps.length - 1 ? 'Finish & Jam' : 'Next Step →' }}
-          </button>
-        </div>
-      </div>
-    </div>
-  }
-
-  <!-- SETTINGS & MUSIC THEORY MODAL '?' -->
-  @if (helpOpen()) {
-    <div
-      class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="help-title"
-    >
-      <div class="bg-zinc-950 border border-zinc-800/90 rounded-3xl p-6 max-w-lg w-full max-h-[85vh] overflow-y-auto shadow-2xl relative">
-        <button
-          type="button"
-          (click)="closeHelp()"
-          class="absolute top-4 right-4 text-zinc-400 hover:text-white p-1 cursor-pointer"
-          aria-label="Close settings"
-        >
-          <mat-icon class="!text-lg">close</mat-icon>
+      </section>
+    } @else {
+      <div class="pointer-events-auto flex justify-end px-3 sm:px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <button type="button" class="icon-btn" (click)="togglePad()" title="Mostra tastiera (K)">
+          <app-icon name="piano" /> Tastiera
         </button>
-
-        <h2 id="help-title" class="text-xl font-bold mb-4 flex items-center gap-2 text-white">
-          <mat-icon class="text-amber-400">tune</mat-icon>
-          Gesture Synth Settings & Guide
-        </h2>
-
-        <!-- Mode Toggles -->
-        <div class="space-y-4 mb-6">
-          <div class="flex items-center justify-between border-b border-zinc-800/80 pb-3">
-            <div>
-              <div class="text-sm font-bold text-zinc-100">Hand Tracking Mode</div>
-              <div class="text-xs text-zinc-400">Use both hands or left hand only</div>
-            </div>
-            <div class="flex gap-1 bg-zinc-900 p-1 rounded-xl border border-zinc-800">
-              <button
-                type="button"
-                (click)="setHandMode(true)"
-                class="px-2.5 py-1 text-xs rounded-lg font-bold cursor-pointer transition-colors"
-                [class]="isTwoHandedMode() ? 'bg-amber-400 text-black' : 'text-zinc-400 hover:text-zinc-200'"
-              >
-                Two-Handed
-              </button>
-              <button
-                type="button"
-                (click)="setHandMode(false)"
-                class="px-2.5 py-1 text-xs rounded-lg font-bold cursor-pointer transition-colors"
-                [class]="!isTwoHandedMode() ? 'bg-amber-400 text-black' : 'text-zinc-400 hover:text-zinc-200'"
-              >
-                One-Handed
-              </button>
-            </div>
-          </div>
-
-          <div class="flex items-center justify-between border-b border-zinc-800/80 pb-3">
-            <div>
-              <div class="text-sm font-bold text-zinc-100">Semitone Pitch Shift</div>
-              <div class="text-xs text-zinc-400">Raise (♯) or Lower (♭) root note</div>
-            </div>
-            <div class="flex gap-1 bg-zinc-900 p-1 rounded-xl border border-zinc-800">
-              <button
-                type="button"
-                (click)="setSemitoneShift('lower')"
-                class="px-2 py-1 text-xs rounded-lg font-bold cursor-pointer transition-colors"
-                [class]="semitoneShift() === 'lower' ? 'bg-amber-400 text-black' : 'text-zinc-400'"
-              >
-                ♭ Lower
-              </button>
-              <button
-                type="button"
-                (click)="setSemitoneShift('off')"
-                class="px-2 py-1 text-xs rounded-lg font-bold cursor-pointer transition-colors"
-                [class]="semitoneShift() === 'off' ? 'bg-amber-400 text-black' : 'text-zinc-400'"
-              >
-                Off
-              </button>
-              <button
-                type="button"
-                (click)="setSemitoneShift('raise')"
-                class="px-2 py-1 text-xs rounded-lg font-bold cursor-pointer transition-colors"
-                [class]="semitoneShift() === 'raise' ? 'bg-amber-400 text-black' : 'text-zinc-400'"
-              >
-                ♯ Raise
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Cheat Sheet Reference -->
-        <div class="mb-4">
-          <div class="text-xs font-bold text-amber-400 uppercase tracking-wider mb-2">
-            Gesture Cheat Sheet
-          </div>
-          <div class="text-xs space-y-1.5 text-zinc-300">
-            <div class="flex justify-between py-1 border-b border-zinc-800/80">
-              <span>Left Hand 1 - 5 Fingers</span>
-              <span class="text-zinc-400">Scale Degrees I to V</span>
-            </div>
-            <div class="flex justify-between py-1 border-b border-zinc-800/80">
-              <span>Left Hand 🤘 Horns / 🤟 ILY</span>
-              <span class="text-zinc-400">Degrees VI and VII</span>
-            </div>
-            <div class="flex justify-between py-1 border-b border-zinc-800/80">
-              <span>Left Hand Tilt (↖️ vs ↗️)</span>
-              <span class="text-zinc-400">Minor vs Major Quality</span>
-            </div>
-            <div class="flex justify-between py-1 border-b border-zinc-800/80">
-              <span>Right Hand 1 - 4 Fingers</span>
-              <span class="text-zinc-400">Root, 1st Inv, 7th, Dom/Dim</span>
-            </div>
-            <div class="flex justify-between py-1 border-b border-zinc-800/80">
-              <span>Hand Height</span>
-              <span class="text-zinc-400">Volume (Higher = Louder)</span>
-            </div>
-            <div class="flex justify-between py-1 border-b border-zinc-800/80">
-              <span>Tilt Angle / Horizontal</span>
-              <span class="text-zinc-400">Lowpass Filter Sweep & Q</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Keyboard Shortcuts -->
-        <div class="text-xs text-zinc-400 bg-zinc-900 p-3 rounded-2xl border border-zinc-800">
-          <div class="font-bold text-zinc-200 mb-1">Keyboard Shortcuts:</div>
-          <div>• <strong>1 - 7:</strong> Select Degrees I - VII</div>
-          <div>• <strong>M:</strong> Toggle Major / Minor</div>
-          <div>• <strong>Q, W, E, R:</strong> Voicing (Root, 1st, 7th, Dom)</div>
-          <div>• <strong>S:</strong> Toggle Synth Shaping Rack</div>
-          <div>• <strong>K:</strong> Toggle Keyboard Bar</div>
-          <div>• <strong>Z, X, C:</strong> Octave (-1, +1, reset)</div>
-          <div>• <strong>↑ / ↓:</strong> Volume Up / Down</div>
-          <div>• <strong>← / →:</strong> Filter Cutoff Sweep</div>
-          <div>• <strong>Space:</strong> Mute / Unmute</div>
-        </div>
-
-        <div class="mt-5 flex justify-end">
-          <button
-            type="button"
-            (click)="closeHelp()"
-            class="px-5 py-2 rounded-xl bg-amber-400 text-black font-bold text-xs hover:bg-amber-300 cursor-pointer"
-          >
-            Close
-          </button>
-        </div>
       </div>
-    </div>
-  }
-  <!-- Camera / hand-tracking error notice -->
-  @if (started() && (cameraStatus() === 'denied' || cameraStatus() === 'unsupported')) {
-    <div
-      class="absolute top-24 left-1/2 -translate-x-1/2 z-40 max-w-sm w-[calc(100%-2rem)] bg-rose-950/90 border border-rose-500/50 text-rose-200 text-[11px] rounded-lg px-3 py-2 shadow-lg backdrop-blur-md flex items-start gap-2"
-      role="status"
-    >
-      <span class="flex-1">
+    }
+  </div>
+
+  <!-- Camera / hand-tracking notice -->
+  @if (cameraNoticeVisible()) {
+    <div class="fixed top-24 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-2rem)] max-w-md panel !border-danger/50 p-3 flex items-start gap-3" role="status">
+      <span class="text-danger mt-0.5"><app-icon name="camera-off" /></span>
+      <p class="flex-1 text-sm">
         @if (cameraStatus() === 'denied') {
-          Webcam not available or permission denied. Using the Virtual Simulator (keyboard &amp; mouse).
+          Webcam non disponibile o permesso negato. Puoi suonare con la tastiera virtuale.
         } @else {
-          Hand tracking could not be loaded (network or browser not supported). Using the Virtual Simulator.
+          Il riconoscimento delle mani non si è avviato (rete assente o browser non supportato). Puoi suonare con la tastiera virtuale.
         }
-      </span>
-      <button type="button" class="text-rose-300 hover:text-white cursor-pointer" (click)="dismissCameraNotice()" aria-label="Dismiss notice">✕</button>
+      </p>
+      <button type="button" class="icon-btn !min-w-9 !h-9" (click)="dismissCameraNotice()" aria-label="Chiudi avviso"><app-icon name="close" [size]="16" /></button>
     </div>
   }
-</main>
+
+  <!-- ============================ SHEETS ============================ -->
+  @if (sheet(); as s) {
+    <div class="fixed inset-0 z-30 bg-bg/50 md:bg-transparent md:pointer-events-none" (click)="closeSheet()" aria-hidden="true"></div>
+    <aside id="sheet" class="sheet" role="dialog" aria-modal="false" aria-labelledby="sheet-title">
+      <div class="flex items-center gap-3 px-5 pt-4 pb-3 border-b border-line">
+        <span class="text-accent">
+          <app-icon [name]="s === 'library' ? 'library' : s === 'sound' ? 'sliders' : s === 'guide' ? 'hand' : s === 'install' ? 'download' : 'help'" />
+        </span>
+        <h2 id="sheet-title" class="font-semibold text-lg flex-1">
+          {{ s === 'library' ? 'Libreria brani' : s === 'sound' ? 'Suono e impostazioni' : s === 'guide' ? 'Guida ai gesti' : s === 'install' ? 'Installa come app' : 'Istruzioni' }}
+        </h2>
+        <button type="button" class="icon-btn" (click)="closeSheet()" aria-label="Chiudi pannello"><app-icon name="close" /></button>
+      </div>
+
+      <div class="overflow-y-auto px-5 py-4 flex-1">
+        @switch (s) {
+          @case ('library') {
+            <button type="button" class="w-full mb-4 rounded-2xl border border-accent/50 bg-accent/10 p-3.5 flex items-center gap-3 text-left" (click)="startLesson()">
+              <span class="text-accent"><app-icon name="target" [size]="28" /></span>
+              <span class="flex-1">
+                <span class="block font-semibold">Esercitazione guidata</span>
+                <span class="block text-sm text-muted">Cinque passi per imparare i gesti base</span>
+              </span>
+              <app-icon name="chevron-right" />
+            </button>
+            <app-song-library [songs]="songs" [selectedId]="practice()?.id ?? null" (songSelected)="startSong($event)" />
+          }
+
+          @case ('sound') {
+            <div class="flex flex-col gap-5">
+              <div>
+                <label class="eyebrow" for="preset-select">Strumento</label>
+                <select id="preset-select" class="field mt-2" [value]="selectedPreset()" (change)="onPresetChange($event)">
+                  @for (p of presetsList; track p.id) {
+                    <option [value]="p.id" [selected]="p.id === selectedPreset()">{{ p.name }}</option>
+                  }
+                </select>
+                @for (p of presetsList; track p.id) {
+                  @if (p.id === selectedPreset()) {
+                    <p class="mt-1.5 text-sm text-muted">{{ p.description }}</p>
+                  }
+                }
+              </div>
+
+              <div>
+                <div class="flex justify-between"><label class="eyebrow" for="vol">Volume</label><span class="text-sm tabular-nums">{{ volumePercent() }}%</span></div>
+                <input id="vol" type="range" min="10" max="100" step="1" [value]="volumePercent()" (input)="onVolumeInput($event)" />
+              </div>
+
+              <fieldset>
+                <legend class="eyebrow">Forma d’onda</legend>
+                <div class="mt-2 flex flex-wrap gap-1.5">
+                  @for (w of waveformsList; track w.id) {
+                    <button type="button" class="seg-btn" [attr.aria-pressed]="customParams().waveform === w.id" (click)="setCustomParam('waveform', w.id)">{{ w.label }}</button>
+                  }
+                </div>
+              </fieldset>
+
+              <fieldset class="grid gap-3">
+                <legend class="eyebrow mb-1">Inviluppo</legend>
+                <div>
+                  <div class="flex justify-between text-sm"><label for="atk">Attacco</label><span class="tabular-nums text-muted">{{ (customParams().attack * 1000).toFixed(0) }} ms</span></div>
+                  <input id="atk" type="range" min="0.005" max="0.6" step="0.005" [value]="customParams().attack" (input)="onRange('attack', $event)" />
+                </div>
+                <div>
+                  <div class="flex justify-between text-sm"><label for="rel">Rilascio</label><span class="tabular-nums text-muted">{{ (customParams().release * 1000).toFixed(0) }} ms</span></div>
+                  <input id="rel" type="range" min="0.05" max="2" step="0.01" [value]="customParams().release" (input)="onRange('release', $event)" />
+                </div>
+              </fieldset>
+
+              <fieldset class="grid gap-3">
+                <legend class="eyebrow mb-1">Filtro</legend>
+                <div>
+                  <div class="flex justify-between text-sm"><label for="cut">Brillantezza</label><span class="tabular-nums text-muted">{{ customParams().cutoff }} Hz</span></div>
+                  <input id="cut" type="range" min="200" max="10000" step="50" [value]="customParams().cutoff" (input)="onRange('cutoff', $event)" />
+                </div>
+                <div>
+                  <div class="flex justify-between text-sm"><label for="res">Risonanza</label><span class="tabular-nums text-muted">{{ customParams().resonance.toFixed(1) }}</span></div>
+                  <input id="res" type="range" min="0.4" max="3.8" step="0.1" [value]="customParams().resonance" (input)="onRange('resonance', $event)" />
+                </div>
+              </fieldset>
+
+              <fieldset class="grid gap-3">
+                <legend class="eyebrow mb-1">Spazio e spessore</legend>
+                <div>
+                  <div class="flex justify-between text-sm"><label for="rev">Eco stereo</label><span class="tabular-nums text-muted">{{ (customParams().reverb * 100).toFixed(0) }}%</span></div>
+                  <input id="rev" type="range" min="0" max="0.65" step="0.01" [value]="customParams().reverb" (input)="onRange('reverb', $event)" />
+                </div>
+                <div>
+                  <div class="flex justify-between text-sm"><label for="det">Desintonia</label><span class="tabular-nums text-muted">{{ customParams().detune }} cent</span></div>
+                  <input id="det" type="range" min="0" max="30" step="1" [value]="customParams().detune" (input)="onRange('detune', $event)" />
+                </div>
+                <button type="button" class="flex items-center justify-between rounded-xl border border-line px-3 min-h-11" role="switch" [attr.aria-checked]="customParams().subOsc" (click)="setCustomParam('subOsc', !customParams().subOsc)">
+                  <span class="text-sm">Sub-oscillatore (un’ottava sotto)</span>
+                  <span class="h-6 w-11 rounded-full p-0.5 transition-colors" [class]="customParams().subOsc ? 'bg-accent' : 'bg-line'">
+                    <span class="block h-5 w-5 rounded-full bg-text transition-transform" [class.translate-x-5]="customParams().subOsc"></span>
+                  </span>
+                </button>
+              </fieldset>
+
+              <button type="button" class="btn-secondary justify-center" (click)="resetSoundParams()"><app-icon name="reset" [size]="18" /> Ripristina il preset</button>
+
+              <fieldset class="grid gap-3 border-t border-line pt-5">
+                <legend class="eyebrow mb-1">Modalità di gioco</legend>
+                <div class="seg w-full" role="group" aria-label="Numero di mani">
+                  <button type="button" class="seg-btn flex-1" [attr.aria-pressed]="isTwoHandedMode()" (click)="setHandMode(true)">Due mani</button>
+                  <button type="button" class="seg-btn flex-1" [attr.aria-pressed]="!isTwoHandedMode()" (click)="setHandMode(false)">Una mano</button>
+                </div>
+                <p class="text-xs text-muted -mt-1">Con una mano basta una qualsiasi delle due per scegliere gli accordi.</p>
+                <div class="seg w-full" role="group" aria-label="Sposta di un semitono">
+                  <button type="button" class="seg-btn flex-1" [attr.aria-pressed]="semitoneShift() === 'lower'" (click)="setSemitoneShift('lower')">−1 semitono</button>
+                  <button type="button" class="seg-btn flex-1" [attr.aria-pressed]="semitoneShift() === 'off'" (click)="setSemitoneShift('off')">Originale</button>
+                  <button type="button" class="seg-btn flex-1" [attr.aria-pressed]="semitoneShift() === 'raise'" (click)="setSemitoneShift('raise')">+1 semitono</button>
+                </div>
+              </fieldset>
+            </div>
+          }
+
+          @case ('guide') {
+            <ng-container [ngTemplateOutlet]="guideTpl" />
+          }
+
+          @case ('install') {
+            @if (installer.isIos()) {
+              <p class="text-muted">Su iPhone e iPad l’installazione si fa da Safari, in tre passi:</p>
+              <ol class="mt-4 grid gap-3">
+                <li class="flex items-center gap-3 rounded-2xl border border-line p-3"><span class="text-accent"><app-icon name="share" [size]="26" /></span><span>Tocca <strong>Condividi</strong> nella barra di Safari</span></li>
+                <li class="flex items-center gap-3 rounded-2xl border border-line p-3"><span class="text-accent"><app-icon name="plus-square" [size]="26" /></span><span>Scegli <strong>Aggiungi alla schermata Home</strong></span></li>
+                <li class="flex items-center gap-3 rounded-2xl border border-line p-3"><span class="text-accent"><app-icon name="check" [size]="26" /></span><span>Conferma con <strong>Aggiungi</strong>: l’icona apparirà tra le tue app</span></li>
+              </ol>
+            } @else {
+              <p class="text-muted">Gesture Synth si installa come un’app vera: icona sul desktop o nella home, finestra dedicata e funzionamento anche offline.</p>
+              <ol class="mt-4 grid gap-3">
+                <li class="flex items-center gap-3 rounded-2xl border border-line p-3"><span class="text-accent"><app-icon name="download" [size]="26" /></span><span>Chrome, Edge: icona <strong>Installa</strong> nella barra degli indirizzi, oppure menu del browser, <strong>Installa app</strong></span></li>
+                <li class="flex items-center gap-3 rounded-2xl border border-line p-3"><span class="text-accent"><app-icon name="plus-square" [size]="26" /></span><span>Android: menu del browser, <strong>Aggiungi a schermata Home</strong> o <strong>Installa app</strong></span></li>
+              </ol>
+            }
+          }
+
+          @default {
+            <!-- Instructions: schematic -->
+            <ol class="grid gap-3">
+              @for (item of [
+                { title: 'Scegli tonalità e scala', text: 'In alto. Oppure apri un brano dalla libreria: imposta tutto da solo.' },
+                { title: 'Mano sinistra: accordo', text: 'Da 1 a 5 dita = gradi I–V. Corna = VI. Pollice, indice e mignolo = VII.' },
+                { title: 'Inclina: maggiore o minore', text: 'A destra maggiore, a sinistra minore.' },
+                { title: 'Mano destra: colore', text: '1–4 dita cambiano il voicing. Altezza = volume. Pollice in fuori = ottava sotto.' },
+                { title: 'Silenzio', text: 'Pugno chiuso o mani fuori dall’inquadratura.' }
+              ]; track $index) {
+                <li class="flex gap-3 rounded-2xl border border-line bg-surface-2/50 p-3">
+                  <span class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent/15 text-accent text-sm font-bold">{{ $index + 1 }}</span>
+                  <span>
+                    <span class="block font-semibold">{{ item.title }}</span>
+                    <span class="block text-sm text-muted">{{ item.text }}</span>
+                  </span>
+                </li>
+              }
+            </ol>
+
+            <div class="mt-4 grid gap-2">
+              <button type="button" class="btn-primary justify-center" (click)="reopenOnboarding()"><app-icon name="guide" /> Rivedi l’introduzione</button>
+              <button type="button" class="btn-secondary justify-center" (click)="startLesson()"><app-icon name="target" /> Esercitazione guidata</button>
+              @if (installer.canOfferInstall()) {
+                <button type="button" class="btn-secondary justify-center" (click)="installApp()"><app-icon name="download" /> Installa come app</button>
+              }
+            </div>
+
+            <h3 class="eyebrow mt-6">Tastiera del computer</h3>
+            <dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm items-center">
+              <dt><kbd>1</kbd>–<kbd>7</kbd></dt><dd class="text-muted">Gradi I–VII</dd>
+              <dt><kbd>M</kbd></dt><dd class="text-muted">Maggiore / minore</dd>
+              <dt><kbd>Q</kbd> <kbd>W</kbd> <kbd>E</kbd> <kbd>R</kbd></dt><dd class="text-muted">Base, rivolto, settima, dominante</dd>
+              <dt><kbd>Z</kbd> <kbd>C</kbd> <kbd>X</kbd></dt><dd class="text-muted">Ottava −1, 0, +1</dd>
+              <dt><kbd>↑</kbd> <kbd>↓</kbd></dt><dd class="text-muted">Volume</dd>
+              <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd class="text-muted">Filtro più scuro / più brillante</dd>
+              <dt><kbd>0</kbd> <kbd>Esc</kbd></dt><dd class="text-muted">Ferma il suono (Esc chiude prima i pannelli)</dd>
+              <dt><kbd>Spazio</kbd></dt><dd class="text-muted">Audio on/off</dd>
+              <dt><kbd>L</kbd> <kbd>G</kbd> <kbd>S</kbd> <kbd>H</kbd></dt><dd class="text-muted">Brani, gesti, suono, istruzioni</dd>
+              <dt><kbd>P</kbd> <kbd>K</kbd></dt><dd class="text-muted">Ascolta il giro, mostra/nascondi tastiera</dd>
+            </dl>
+
+            <h3 class="eyebrow mt-6">Se la webcam non funziona</h3>
+            <ul class="mt-2 grid gap-1.5 text-sm text-muted list-disc pl-5">
+              <li>Consenti l’accesso alla videocamera quando il browser lo chiede.</li>
+              <li>Stai a 50–80 cm dalla webcam, con una luce frontale.</li>
+              <li>Mostra il palmo alla camera, dita ben separate.</li>
+              <li>Il primo avvio scarica il modello di riconoscimento: serve la connessione.</li>
+            </ul>
+          }
+        }
+      </div>
+    </aside>
+  }
+}
+
+<!-- ============================ ONBOARDING ============================ -->
+@if (onboardingOpen()) {
+  <app-onboarding
+    [startAtEnd]="onboardingSeen() && !started()"
+    [started]="started()"
+    [canInstall]="installer.canOfferInstall()"
+    (startCamera)="onboardingStart(true)"
+    (startVirtual)="onboardingStart(false)"
+    (openLibrary)="openLibraryFromOnboarding()"
+    (install)="installApp()"
+    (dismiss)="closeOnboarding()"
+  />
+}

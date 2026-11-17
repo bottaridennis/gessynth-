@@ -5,319 +5,452 @@ import {
   OnDestroy,
   OnInit,
   PLATFORM_ID,
-  ViewChild,
   computed,
+  effect,
   inject,
   signal,
+  viewChild,
 } from '@angular/core';
-import { isPlatformBrowser } from '@angular/common';
-import { MatIconModule } from '@angular/material/icon';
+import { NgTemplateOutlet, isPlatformBrowser } from '@angular/common';
 import {
-  KeySignature,
-  ScaleMode,
-  SCALE_MODES,
-  ScaleModeInfo,
-  getScaleNotes,
+  ChordDegree,
+  DEGREE_COLORS,
   KEY_BASE_FREQUENCIES,
+  KeySignature,
+  ROMAN_DEGREES,
+  SCALE_MODES,
+  ScaleMode,
   SemitoneShift,
   calculateChordTones,
-  getVoicingFrequencies,
+  formatNoteName,
   getChordDisplayName,
-  DEGREE_COLORS,
+  getChordNotes,
+  getDegreeRootName,
+  getVoicingFrequencies,
 } from './synth/music-theory';
 import {
-  GestureDetectionResult,
   GestureDebouncer,
-  classifyLeftHandDegree,
-  classifyRightHandVoicing,
+  GestureDetectionResult,
+  Landmark,
+  calculateFilterSweep,
   calculateHandTilt,
   calculateVolumeFromHeight,
-  calculateFilterSweep,
-  isThumbExtended,
+  classifyLeftHandDegree,
+  classifyRightHandVoicing,
   isHandClosed,
-  Landmark,
+  isThumbExtended,
 } from './synth/gesture-classifier';
 import {
   AudioEngine,
   INSTRUMENT_PRESETS,
   InstrumentPreset,
-  SoundCustomParams,
   PRESET_DEFAULT_PARAMS,
+  SoundCustomParams,
 } from './synth/audio-engine';
-import { HandTrackerService } from './synth/hand-tracker';
-import { TUTORIAL_STEPS, TutorialStep } from './synth/tutorial-data';
+import { HandDetectionFrame, HandTrackerService } from './synth/hand-tracker';
+import { TUTORIAL_STEPS } from './synth/tutorial-data';
+import { DEGREE_GESTURES, FIST_GESTURE, VOICING_GESTURES } from './synth/gestures';
+import { SONGS, Song, getSongSteps } from './synth/songs';
+import { IconComponent } from './ui/icon';
+import { HandGestureComponent } from './ui/hand-gesture';
+import { OnboardingComponent } from './ui/onboarding';
+import { SongLibraryComponent } from './ui/song-library';
+import { InstallService } from './pwa/install.service';
 
-interface DegreeGuideItem {
-  degree: number;
-  roman: string;
-  gesture: string;
-  name: string;
+type Sheet = 'library' | 'sound' | 'help' | 'guide' | 'install' | null;
+type CameraStatus = 'idle' | 'requesting' | 'active' | 'denied' | 'unsupported';
+
+export interface PracticeStep {
+  degree: ChordDegree;
+  major: boolean;
+  voicings?: number[];
+  chord?: string;
+  title?: string;
+  description?: string;
+  theory?: string;
+  section?: string;
 }
+
+export interface Practice {
+  kind: 'song' | 'lesson';
+  id: string;
+  title: string;
+  subtitle: string;
+  note?: string;
+  bpm: number;
+  steps: PracticeStep[];
+}
+
+const ONBOARDING_KEY = 'gs.onboarding.v2';
+const SOLFEGE: Record<string, string> = { C: 'Do', D: 'Re', E: 'Mi', F: 'Fa', G: 'Sol', A: 'La', B: 'Si' };
+
+const degreeRgb = (deg: string | null | undefined): [number, number, number] =>
+  DEGREE_COLORS[(deg ?? 'I').toUpperCase()] ?? [245, 181, 68];
 
 @Component({
   selector: 'app-root',
-  imports: [MatIconModule],
+  imports: [NgTemplateOutlet, IconComponent, HandGestureComponent, OnboardingComponent, SongLibraryComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   templateUrl: './app.html',
   styleUrl: './app.css',
   host: {
     '(window:keydown)': 'handleKeyDown($event)',
     '(window:resize)': 'handleResize()',
+    '(document:visibilitychange)': 'handleVisibility()',
   },
 })
 export class App implements OnInit, OnDestroy {
-  private readonly platformId = inject(PLATFORM_ID);
-  private isBrowser = isPlatformBrowser(this.platformId);
+  private readonly isBrowser = isPlatformBrowser(inject(PLATFORM_ID));
+  protected readonly installer = inject(InstallService);
 
-  @ViewChild('webcamVideo') webcamVideoRef!: ElementRef<HTMLVideoElement>;
-  @ViewChild('overlayCanvas') overlayCanvasRef!: ElementRef<HTMLCanvasElement>;
+  private readonly webcamVideo = viewChild<ElementRef<HTMLVideoElement>>('webcamVideo');
+  private readonly overlayCanvas = viewChild<ElementRef<HTMLCanvasElement>>('overlayCanvas');
 
-  readonly Math = Math;
-
-  // Core App States
+  // ---------------------------------------------------------------- app state
   readonly started = signal(false);
-  readonly tutorialOpen = signal(false);
-  readonly currentTutorialStepIndex = signal(0);
-  readonly helpOpen = signal(false);
+  readonly onboardingOpen = signal(true);
+  readonly onboardingSeen = signal(false);
+  readonly sheet = signal<Sheet>(null);
   readonly guideVisible = signal(true);
+  readonly padVisible = signal(true);
   readonly isVirtualMode = signal(false);
-  readonly cameraStatus = signal<'idle' | 'requesting' | 'active' | 'denied' | 'unsupported'>('idle');
+  readonly cameraStatus = signal<CameraStatus>('idle');
+  readonly cameraNoticeVisible = signal(false);
 
-  // Synth Configuration
-  readonly selectedKey = signal<KeySignature>('A');
+  // ---------------------------------------------------------- synth settings
+  readonly selectedKey = signal<KeySignature>('C');
   readonly selectedScaleMode = signal<ScaleMode>('major');
   readonly selectedPreset = signal<InstrumentPreset>('warm');
   readonly isTwoHandedMode = signal(true);
   readonly semitoneShift = signal<SemitoneShift>('off');
   readonly isAudioMuted = signal(false);
   readonly audioUnlocked = signal(false);
-  readonly soundRackOpen = signal(false);
   readonly customParams = signal<SoundCustomParams>({ ...PRESET_DEFAULT_PARAMS.warm });
 
-  // Live Gesture States
+  // -------------------------------------------------------- live performance
   readonly activeDegree = signal<string | null>(null);
   readonly handsDetected = signal(false);
   readonly isHandClosed = signal(false);
   readonly isMajor = signal(true);
   readonly tiltValue = signal(0.3);
-  readonly voicingQuality = signal(1); // 1 = Root, 2 = 1st, 3 = 7th, 4 = Dom/Dim
+  readonly voicingQuality = signal(1);
   readonly octaveShift = signal<number>(1.0);
   readonly currentVolume = signal(0.75);
   readonly currentFilterFreq = signal(1200);
   readonly currentFilterQ = signal(0.7);
 
-  // Hand landmarks for drawing
-  private liveLeftLandmarks: Landmark[] | null = null;
-  private liveRightLandmarks: Landmark[] | null = null;
+  // ---------------------------------------------------------------- practice
+  readonly practice = signal<Practice | null>(null);
+  readonly practiceIndex = signal(0);
+  readonly practiceLoops = signal(0);
+  readonly practiceHit = signal(false);
+  readonly demoPlaying = signal(false);
 
-  // Services
+  // ------------------------------------------------------------- static data
+  readonly keysList: KeySignature[] = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+  readonly scaleModesList = SCALE_MODES;
+  readonly presetsList = INSTRUMENT_PRESETS;
+  readonly songs = SONGS;
+  readonly romans = ROMAN_DEGREES;
+  readonly degreeGestures = DEGREE_GESTURES;
+  readonly fistGesture = FIST_GESTURE;
+  readonly voicingGestures = VOICING_GESTURES;
+  readonly waveformsList: { id: SoundCustomParams['waveform']; label: string }[] = [
+    { id: 'auto', label: 'Preset' },
+    { id: 'sine', label: 'Sinusoide' },
+    { id: 'triangle', label: 'Triangolo' },
+    { id: 'sawtooth', label: 'Dente di sega' },
+    { id: 'square', label: 'Quadra' },
+  ];
+  readonly octaves = [
+    { value: 0.5, label: '−1' },
+    { value: 1.0, label: '0' },
+    { value: 2.0, label: '+1' },
+  ];
+  readonly formatNoteName = formatNoteName;
+
+  // ---------------------------------------------------------------- services
   private readonly audioEngine = new AudioEngine();
   private readonly handTracker = new HandTrackerService();
   private readonly debouncer = new GestureDebouncer();
   private animationFrameId: number | null = null;
-  private wavePhase = 0;
   private lastKeyboardInputTime = 0;
   private lastHandsSeenTime = 0;
+  private liveLeftLandmarks: Landmark[] | null = null;
+  private liveRightLandmarks: Landmark[] | null = null;
+  private readonly scopeBuffer = new Uint8Array(512);
+  private canvasDpr = 1;
+  private practiceTimer: ReturnType<typeof setTimeout> | null = null;
+  private demoTimer: ReturnType<typeof setTimeout> | null = null;
 
-  // On-screen keyboard bar visible by default
-  readonly keyboardBarVisible = signal(true);
+  // ------------------------------------------------------------------ derived
+  readonly chordDisplayName = computed(() =>
+    formatNoteName(
+      getChordDisplayName(
+        this.activeDegree(),
+        this.isMajor(),
+        this.selectedKey(),
+        this.isTwoHandedMode() ? this.voicingQuality() : 1,
+        this.semitoneShift(),
+        this.selectedScaleMode()
+      )
+    )
+  );
 
-  // Static Data
-  readonly keysList: KeySignature[] = ['A', 'Bb', 'B', 'C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab'];
-  readonly scaleModesList: ScaleModeInfo[] = SCALE_MODES;
-  readonly presetsList = INSTRUMENT_PRESETS;
-  readonly tutorialSteps = TUTORIAL_STEPS;
-  readonly waveformsList: SoundCustomParams['waveform'][] = ['auto', 'sine', 'triangle', 'sawtooth', 'square'];
-
-  // Computed Values
-  readonly currentTutorialStep = computed<TutorialStep>(() => {
-    return this.tutorialSteps[this.currentTutorialStepIndex()] ?? this.tutorialSteps[0];
-  });
-
-  readonly isTutorialStepSatisfied = computed(() => {
-    const step = this.currentTutorialStep();
-    const deg = this.activeDegree();
-    const maj = this.isMajor();
-    const v = this.voicingQuality();
-
-    if (!deg) return false;
-    const degreeMatches = deg.toUpperCase() === step.targetDegree.toUpperCase();
-    const majorMatches = maj === step.targetMajor;
-    const allowed = step.targetVoicings ?? (step.targetVoicing ? [step.targetVoicing] : null);
-    const voicingMatches = allowed ? allowed.includes(v) : true;
-
-    return degreeMatches && majorMatches && voicingMatches;
-  });
-
-  readonly chordDisplayName = computed(() => {
-    return getChordDisplayName(
+  readonly chordNotes = computed(() =>
+    getChordNotes(
       this.activeDegree(),
       this.isMajor(),
       this.selectedKey(),
-      this.voicingQuality(),
+      this.isTwoHandedMode() ? this.voicingQuality() : 1,
       this.semitoneShift(),
       this.selectedScaleMode()
-    );
-  });
+    ).map(formatNoteName)
+  );
 
   readonly activeDegreeColor = computed(() => {
     const deg = this.activeDegree();
-    if (!deg) return 'rgb(113, 113, 122)';
-    const rgb = DEGREE_COLORS[deg.toUpperCase()] || [232, 161, 61];
-    return `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+    if (!deg) return 'var(--color-muted)';
+    return `rgb(${degreeRgb(deg).join(',')})`;
   });
 
-  readonly volumeLedCount = computed(() => {
-    if (this.cameraStatus() === 'active' && !this.handsDetected()) {
-      return 0;
-    }
-    if (this.activeDegree() === null) {
-      return 0;
-    }
-    return Math.round(this.currentVolume() * 8);
-  });
+  readonly volumePercent = computed(() => Math.round(this.currentVolume() * 100));
 
-  readonly guideDegreeRows = computed<DegreeGuideItem[]>(() => {
-    const scale = getScaleNotes(this.selectedKey(), this.selectedScaleMode());
-    const gestures = ['1️⃣', '2️⃣', '3️⃣', '4️⃣', '5️⃣', '🤘', '🤟'];
-    const romans = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+  readonly keyLabel = computed(() => this.keyName(this.selectedKey()));
 
-    // Display descending 7 -> 1 like reference
-    return [7, 6, 5, 4, 3, 2, 1].map((deg) => ({
-      degree: deg,
-      roman: romans[deg - 1],
-      gesture: gestures[deg - 1],
-      name: scale[deg - 1] || 'C',
+  readonly scaleLabel = computed(
+    () => SCALE_MODES.find((m) => m.id === this.selectedScaleMode())?.name ?? this.selectedScaleMode()
+  );
+
+  /** The 7 chord buttons / guide rows for the current key and scale */
+  readonly degreeItems = computed(() => {
+    const key = this.selectedKey();
+    const mode = this.selectedScaleMode();
+    const shift = this.semitoneShift();
+    const major = this.isMajor();
+    return ROMAN_DEGREES.map((roman, i) => ({
+      roman,
+      number: i + 1,
+      gesture: DEGREE_GESTURES[roman],
+      note: formatNoteName(getDegreeRootName(key, mode, roman, shift) ?? ''),
+      chord: formatNoteName(getChordDisplayName(roman, major, key, 1, shift, mode)),
+      color: `rgb(${degreeRgb(roman).join(',')})`,
     }));
   });
 
-  readonly rightHandVoicings = computed(() => {
-    if (this.isMajor()) {
-      return [
-        { index: 1, gesture: '1️⃣', label: 'Root' },
-        { index: 2, gesture: '2️⃣', label: '1st' },
-        { index: 3, gesture: '3️⃣', label: 'Maj 7' },
-        { index: 4, gesture: '4️⃣', label: 'Dom 7' },
-      ];
-    } else {
-      return [
-        { index: 1, gesture: '1️⃣', label: 'Root' },
-        { index: 2, gesture: '2️⃣', label: '1st' },
-        { index: 3, gesture: '3️⃣', label: 'Min 7' },
-        { index: 4, gesture: '4️⃣', label: 'Dim 7' },
-      ];
-    }
+  readonly practiceStep = computed<PracticeStep | null>(() => {
+    const p = this.practice();
+    if (!p) return null;
+    return p.steps[this.practiceIndex()] ?? null;
   });
 
+  readonly practiceNext = computed<PracticeStep | null>(() => {
+    const p = this.practice();
+    if (!p || p.steps.length < 2) return null;
+    return p.steps[(this.practiceIndex() + 1) % p.steps.length];
+  });
+
+  readonly practiceStepChord = computed(() => {
+    const step = this.practiceStep();
+    return step ? this.stepChordName(step) : '';
+  });
+
+  readonly practiceStepNotes = computed(() => {
+    const step = this.practiceStep();
+    if (!step) return [];
+    return getChordNotes(
+      step.degree,
+      step.major,
+      this.selectedKey(),
+      step.voicings?.[0] ?? 1,
+      'off',
+      this.selectedScaleMode()
+    ).map(formatNoteName);
+  });
+
+  readonly practiceSatisfied = computed(() => {
+    const step = this.practiceStep();
+    const deg = this.activeDegree();
+    if (!step || !deg) return false;
+    const voicingOk =
+      !step.voicings || !this.isTwoHandedMode() || step.voicings.includes(this.voicingQuality());
+    return deg.toUpperCase() === step.degree && this.isMajor() === step.major && voicingOk;
+  });
+
+  constructor() {
+    // Practice: advance automatically once the target chord has been held briefly
+    effect(() => {
+      const satisfied = this.practiceSatisfied();
+      const demo = this.demoPlaying();
+      if (this.practiceTimer) {
+        clearTimeout(this.practiceTimer);
+        this.practiceTimer = null;
+      }
+      if (!satisfied || demo) return;
+      this.practiceHit.set(true);
+      this.practiceTimer = setTimeout(() => {
+        this.practiceTimer = null;
+        this.practiceHit.set(false);
+        this.advancePractice(1);
+      }, 650);
+    });
+  }
+
+  // ===================================================================== life
   ngOnInit(): void {
     if (!this.isBrowser) return;
+    const seen = this.safeStorageGet(ONBOARDING_KEY) === '1';
+    this.onboardingSeen.set(seen);
+    this.guideVisible.set(window.matchMedia?.('(min-width: 1024px)').matches ?? true);
 
-    // Check query params for autostart
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('autostart') === '1') {
-      this.startApp(true);
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('autostart') === '1') {
+      void this.startApp(true);
     }
   }
 
   ngOnDestroy(): void {
-    if (this.animationFrameId !== null) {
-      cancelAnimationFrame(this.animationFrameId);
-    }
+    if (this.animationFrameId !== null) cancelAnimationFrame(this.animationFrameId);
+    this.stopDemo();
     this.handTracker.stopCamera();
     this.audioEngine.destroy();
   }
 
+  // ================================================================ start-up
   async startApp(skipCamera = false): Promise<void> {
     this.started.set(true);
+    this.onboardingOpen.set(false);
+    this.markOnboardingSeen();
 
-    // Initialize Web Audio
     await this.audioEngine.init();
+    this.audioEngine.setMuted(this.isAudioMuted());
     this.audioUnlocked.set(true);
+    this.startRenderLoop();
 
     if (skipCamera) {
-      this.isVirtualMode.set(true);
-      this.cameraStatus.set('idle');
-      this.activeDegree.set('I');
-      this.startRenderLoop();
-      this.triggerCurrentChord();
+      this.enterVirtualMode();
+      return;
+    }
+    await this.enableCamera();
+  }
+
+  async openLibraryFromOnboarding(): Promise<void> {
+    if (this.started()) {
+      this.onboardingOpen.set(false);
+    } else {
+      await this.startApp(true);
+    }
+    this.sheet.set('library');
+  }
+
+  /** Final onboarding step: start (or switch) with or without the webcam. */
+  async onboardingStart(useCamera: boolean): Promise<void> {
+    if (!this.started()) {
+      await this.startApp(!useCamera);
+      return;
+    }
+    this.onboardingOpen.set(false);
+    const active = this.cameraStatus() === 'active';
+    if (useCamera !== active) await this.toggleCameraMode();
+  }
+
+  reopenOnboarding(): void {
+    this.sheet.set(null);
+    this.onboardingOpen.set(true);
+  }
+
+  closeOnboarding(): void {
+    this.onboardingOpen.set(false);
+  }
+
+  private async enableCamera(): Promise<void> {
+    this.audioEngine.stopVoices(true);
+    this.activeDegree.set(null);
+    this.handsDetected.set(false);
+
+    const video = this.webcamVideo()?.nativeElement;
+    if (!video || !navigator.mediaDevices?.getUserMedia) {
+      this.cameraStatus.set('unsupported');
+      this.cameraNoticeVisible.set(true);
+      this.enterVirtualMode();
       return;
     }
 
-    // Attempt Camera and MediaPipe initialization
-    this.activeDegree.set(null);
-    this.handsDetected.set(false);
     this.cameraStatus.set('requesting');
     const mediaPipeReady = await this.handTracker.loadMediaPipe();
+    const cameraOk = mediaPipeReady ? await this.handTracker.startCamera(video) : false;
 
-    if (this.webcamVideoRef?.nativeElement) {
-      const cameraSuccess = mediaPipeReady
-        ? await this.handTracker.startCamera(this.webcamVideoRef.nativeElement)
-        : false;
-      if (cameraSuccess) {
-        this.cameraStatus.set('active');
-        this.isVirtualMode.set(false);
-      } else {
-        // Without hand tracking the camera is useless: fall back to virtual mode.
-        // (Leaving the camera "active" would make the render loop silence every chord.)
-        this.cameraStatus.set(mediaPipeReady ? 'denied' : 'unsupported');
-        this.isVirtualMode.set(true);
-        this.activeDegree.set('I');
-        this.triggerCurrentChord();
-      }
+    if (cameraOk) {
+      this.cameraStatus.set('active');
+      this.cameraNoticeVisible.set(false);
+      this.isVirtualMode.set(false);
+      this.debouncer.reset();
     } else {
-      this.isVirtualMode.set(true);
-      this.activeDegree.set('I');
-      this.triggerCurrentChord();
+      // Without hand tracking the camera is useless: fall back to virtual mode
+      this.cameraStatus.set(mediaPipeReady ? 'denied' : 'unsupported');
+      this.cameraNoticeVisible.set(true);
+      this.enterVirtualMode();
     }
+  }
 
-    this.startRenderLoop();
-    // In camera mode, audio only starts when hands are detected in frame
+  private enterVirtualMode(): void {
+    this.isVirtualMode.set(true);
+    this.handsDetected.set(false);
+    this.liveLeftLandmarks = null;
+    this.liveRightLandmarks = null;
   }
 
   async toggleCameraMode(): Promise<void> {
+    if (this.cameraStatus() === 'requesting') return;
     if (this.cameraStatus() === 'active') {
-      this.handTracker.stopCamera(this.webcamVideoRef?.nativeElement);
+      this.handTracker.stopCamera(this.webcamVideo()?.nativeElement);
       this.cameraStatus.set('idle');
-      this.isVirtualMode.set(true);
-      this.handsDetected.set(false);
-      this.audioEngine.stopVoices(true);
-      this.activeDegree.set('I');
-      this.triggerCurrentChord();
-    } else {
       this.audioEngine.stopVoices(true);
       this.activeDegree.set(null);
-      this.handsDetected.set(false);
-      this.cameraStatus.set('requesting');
-      const mediaPipeReady = await this.handTracker.loadMediaPipe();
-      const video = this.webcamVideoRef?.nativeElement;
-      const ok = mediaPipeReady && video ? await this.handTracker.startCamera(video) : false;
-      if (ok) {
-        this.cameraStatus.set('active');
-        this.isVirtualMode.set(false);
-        this.handsDetected.set(false);
-        this.debouncer.reset();
-      } else {
-        this.cameraStatus.set(mediaPipeReady ? 'denied' : 'unsupported');
-        this.isVirtualMode.set(true);
-        this.activeDegree.set('I');
-        this.triggerCurrentChord();
-      }
+      this.enterVirtualMode();
+    } else {
+      this.stopDemo();
+      await this.enableCamera();
     }
   }
 
   dismissCameraNotice(): void {
-    this.cameraStatus.set('idle');
+    this.cameraNoticeVisible.set(false);
   }
 
-  async unlockAudio(): Promise<void> {
-    await this.audioEngine.init();
-    this.audioUnlocked.set(true);
-    this.triggerCurrentChord();
+  async installApp(): Promise<void> {
+    const shown = await this.installer.install();
+    if (!shown) {
+      this.onboardingOpen.set(false);
+      this.sheet.set('install');
+    }
   }
 
+  // ================================================================== sheets
+  toggleSheet(sheet: Exclude<Sheet, null>): void {
+    this.sheet.update((current) => (current === sheet ? null : sheet));
+  }
+
+  closeSheet(): void {
+    this.sheet.set(null);
+  }
+
+  toggleGuide(): void {
+    // On small screens the guide is a bottom sheet, on large screens a side panel
+    if (this.isBrowser && !window.matchMedia?.('(min-width: 1024px)').matches) {
+      this.toggleSheet('guide');
+    } else {
+      this.guideVisible.update((v) => !v);
+    }
+  }
+
+  togglePad(): void {
+    this.padVisible.update((v) => !v);
+  }
+
+  // ========================================================= synth settings
   onKeyChange(event: Event): void {
-    const val = (event.target as HTMLSelectElement).value as KeySignature;
-    this.selectedKey.set(val);
+    this.selectedKey.set((event.target as HTMLSelectElement).value as KeySignature);
     this.triggerCurrentChord();
   }
 
@@ -325,25 +458,15 @@ export class App implements OnInit, OnDestroy {
     const val = (event.target as HTMLSelectElement).value as ScaleMode;
     this.selectedScaleMode.set(val);
     const modeInfo = SCALE_MODES.find((m) => m.id === val);
-    if (modeInfo) {
-      this.isMajor.set(modeInfo.defaultMajor);
-    }
+    if (modeInfo) this.isMajor.set(modeInfo.defaultMajor);
     this.triggerCurrentChord();
   }
 
-  onToneChange(event: Event): void {
+  onPresetChange(event: Event): void {
     const val = (event.target as HTMLSelectElement).value as InstrumentPreset;
     this.selectedPreset.set(val);
     this.audioEngine.setPreset(val);
     this.customParams.set(this.audioEngine.getCustomParams());
-  }
-
-  toggleSoundRack(): void {
-    this.soundRackOpen.update((v) => !v);
-  }
-
-  closeSoundRack(): void {
-    this.soundRackOpen.set(false);
   }
 
   setCustomParam<K extends keyof SoundCustomParams>(key: K, value: SoundCustomParams[K]): void {
@@ -351,52 +474,13 @@ export class App implements OnInit, OnDestroy {
     this.customParams.set(this.audioEngine.getCustomParams());
   }
 
-  setWaveform(waveform: SoundCustomParams['waveform']): void {
-    this.setCustomParam('waveform', waveform);
+  onRange(key: 'attack' | 'release' | 'cutoff' | 'resonance' | 'reverb' | 'detune', event: Event): void {
+    this.setCustomParam(key, Number((event.target as HTMLInputElement).value));
   }
 
   resetSoundParams(): void {
     this.audioEngine.resetCustomParamsToPreset();
     this.customParams.set(this.audioEngine.getCustomParams());
-  }
-
-  toggleGuide(): void {
-    this.guideVisible.update((v) => !v);
-  }
-
-  openTutorial(): void {
-    this.tutorialOpen.set(true);
-    this.currentTutorialStepIndex.set(0);
-    this.helpOpen.set(false);
-    if (!this.started()) {
-      this.startApp(true);
-    }
-  }
-
-  closeTutorial(): void {
-    this.tutorialOpen.set(false);
-  }
-
-  nextTutorialStep(): void {
-    if (this.currentTutorialStepIndex() < this.tutorialSteps.length - 1) {
-      this.currentTutorialStepIndex.update((i) => i + 1);
-    } else {
-      this.closeTutorial();
-    }
-  }
-
-  prevTutorialStep(): void {
-    if (this.currentTutorialStepIndex() > 0) {
-      this.currentTutorialStepIndex.update((i) => i - 1);
-    }
-  }
-
-  openHelp(): void {
-    this.helpOpen.set(true);
-  }
-
-  closeHelp(): void {
-    this.helpOpen.set(false);
   }
 
   setHandMode(twoHanded: boolean): void {
@@ -414,22 +498,29 @@ export class App implements OnInit, OnDestroy {
     this.audioEngine.setMuted(this.isAudioMuted());
   }
 
-  toggleKeyboardBar(): void {
-    this.keyboardBarVisible.update((v) => !v);
+  keyName(key: string): string {
+    const solfege = SOLFEGE[key[0]] ?? '';
+    const accidental = key.slice(1).replace(/#/g, '♯').replace(/b/g, '♭');
+    return `${formatNoteName(key)} · ${solfege}${accidental}`;
   }
 
-  // Interactive Virtual & Keyboard Controls
+  // ========================================================= virtual playing
   setVirtualDegree(deg: string): void {
     this.lastKeyboardInputTime = performance.now();
+    this.stopDemo();
     this.activeDegree.set(deg);
     this.triggerCurrentChord();
   }
 
-  toggleVirtualMajorMinor(): void {
+  setMajor(major: boolean): void {
     this.lastKeyboardInputTime = performance.now();
-    this.isMajor.update((m) => !m);
-    this.tiltValue.set(this.isMajor() ? 0.35 : -0.35);
+    this.isMajor.set(major);
+    this.tiltValue.set(major ? 0.35 : -0.35);
     this.triggerCurrentChord();
+  }
+
+  toggleVirtualMajorMinor(): void {
+    this.setMajor(!this.isMajor());
   }
 
   setVirtualVoicing(v: number): void {
@@ -450,6 +541,10 @@ export class App implements OnInit, OnDestroy {
     this.audioEngine.updateVolume(vol);
   }
 
+  onVolumeInput(event: Event): void {
+    this.setVirtualVolume(Number((event.target as HTMLInputElement).value) / 100);
+  }
+
   setVirtualFilter(tilt: number): void {
     this.lastKeyboardInputTime = performance.now();
     this.tiltValue.set(tilt);
@@ -459,58 +554,61 @@ export class App implements OnInit, OnDestroy {
     this.audioEngine.updateFilter(sweep.frequency, sweep.q);
   }
 
+  stopVirtualSound(): void {
+    this.lastKeyboardInputTime = performance.now();
+    this.stopDemo();
+    this.activeDegree.set(null);
+    this.audioEngine.stopVoices(true);
+  }
+
   handleKeyDown(event: KeyboardEvent): void {
-    if (!this.started()) return;
-    // Don't hijack browser shortcuts (Ctrl+C, Cmd+R, ...) or auto-repeat
+    if (!this.started() || this.onboardingOpen()) return;
     if (event.ctrlKey || event.metaKey || event.altKey || event.repeat) return;
     const key = event.key.toLowerCase();
 
-    // Escape closes any open overlay before acting as "stop sound"
-    if (key === 'escape' && (this.helpOpen() || this.tutorialOpen() || this.soundRackOpen())) {
+    if (key === 'escape' && this.sheet()) {
       event.preventDefault();
-      this.helpOpen.set(false);
-      this.tutorialOpen.set(false);
-      this.soundRackOpen.set(false);
+      this.sheet.set(null);
       return;
     }
 
-    // Let form controls (selects, sliders, buttons) keep their native keyboard behaviour
     const target = event.target as HTMLElement | null;
     const tag = target?.tagName;
-    if (tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) {
-      return;
-    }
-    if (key === ' ' && tag === 'BUTTON') return;
+    if (tag === 'SELECT' || tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable) return;
+    if ((key === ' ' || key === 'enter') && tag === 'BUTTON') return;
 
-    // Auto-resume audio if needed on key press
-    if (!this.audioUnlocked()) {
-      void this.unlockAudio();
-    }
+    if (!this.audioUnlocked()) void this.unlockAudio();
 
-    // Numbers 1-7: Degrees
-    if (['1', '2', '3', '4', '5', '6', '7'].includes(key)) {
-      const romans = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
-      this.setVirtualDegree(romans[parseInt(key, 10) - 1]);
+    if (key >= '1' && key <= '7') {
+      this.setVirtualDegree(ROMAN_DEGREES[Number(key) - 1]);
     } else if (key === 'm') {
       this.toggleVirtualMajorMinor();
     } else if (key === 'q') {
-      this.setVirtualVoicing(1); // Root
+      this.setVirtualVoicing(1);
     } else if (key === 'w') {
-      this.setVirtualVoicing(2); // 1st
+      this.setVirtualVoicing(2);
     } else if (key === 'e') {
-      this.setVirtualVoicing(3); // 7th
+      this.setVirtualVoicing(3);
     } else if (key === 'r') {
-      this.setVirtualVoicing(4); // Dom/Dim 7
+      this.setVirtualVoicing(4);
     } else if (key === 'z') {
-      this.setVirtualOctave(0.5); // Octave down
+      this.setVirtualOctave(0.5);
     } else if (key === 'x') {
-      this.setVirtualOctave(2.0); // Octave up
+      this.setVirtualOctave(2.0);
     } else if (key === 'c') {
-      this.setVirtualOctave(1.0); // Octave reset
+      this.setVirtualOctave(1.0);
     } else if (key === 'k') {
-      this.toggleKeyboardBar();
+      this.togglePad();
     } else if (key === 's') {
-      this.toggleSoundRack();
+      this.toggleSheet('sound');
+    } else if (key === 'l') {
+      this.toggleSheet('library');
+    } else if (key === 'g') {
+      this.toggleGuide();
+    } else if (key === 'h' || key === '?') {
+      this.toggleSheet('help');
+    } else if (key === 'p' && this.practice()) {
+      this.toggleDemo();
     } else if (key === 'arrowup') {
       event.preventDefault();
       this.setVirtualVolume(Math.min(1.0, this.currentVolume() + 0.1));
@@ -532,21 +630,152 @@ export class App implements OnInit, OnDestroy {
     }
   }
 
-  stopVirtualSound(): void {
-    this.lastKeyboardInputTime = performance.now();
+  async unlockAudio(): Promise<void> {
+    await this.audioEngine.init();
+    this.audioUnlocked.set(true);
+  }
+
+  handleVisibility(): void {
+    if (!this.isBrowser || document.visibilityState !== 'hidden') return;
+    // Leaving the app (tab switch, phone lock): never keep a chord hanging
+    this.stopDemo();
+    this.audioEngine.stopVoices(true);
     this.activeDegree.set(null);
-    this.audioEngine.panic();
   }
 
   handleResize(): void {
-    if (!this.isBrowser) return;
-    const canvas = this.overlayCanvasRef?.nativeElement;
-    if (canvas) {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+    this.resizeCanvas();
+  }
+
+  // ================================================================ practice
+  startSong(song: Song): void {
+    this.stopDemo();
+    this.selectedKey.set(song.key);
+    this.selectedScaleMode.set(song.mode);
+    this.practice.set({
+      kind: 'song',
+      id: song.id,
+      title: song.title,
+      subtitle: song.artist,
+      note: song.note,
+      bpm: song.bpm,
+      steps: getSongSteps(song).map((s) => ({
+        degree: s.degree,
+        major: s.major,
+        chord: s.chord,
+        section: s.section,
+        voicings: s.voicing ? [s.voicing] : undefined,
+      })),
+    });
+    this.practiceIndex.set(0);
+    this.practiceLoops.set(0);
+    this.sheet.set(null);
+    this.stopVirtualSound();
+  }
+
+  startLesson(): void {
+    this.stopDemo();
+    this.practice.set({
+      kind: 'lesson',
+      id: 'lesson',
+      title: 'Esercitazione guidata',
+      subtitle: 'Cinque passi per imparare i gesti',
+      bpm: 60,
+      steps: TUTORIAL_STEPS.map((t) => ({
+        degree: t.targetDegree,
+        major: t.targetMajor,
+        voicings: t.targetVoicings,
+        title: t.title,
+        description: t.description,
+        theory: t.theory,
+      })),
+    });
+    this.practiceIndex.set(0);
+    this.practiceLoops.set(0);
+    this.sheet.set(null);
+  }
+
+  stopPractice(): void {
+    this.stopDemo();
+    this.practice.set(null);
+    this.practiceHit.set(false);
+  }
+
+  advancePractice(delta: number): void {
+    const p = this.practice();
+    if (!p) return;
+    const next = this.practiceIndex() + delta;
+    if (next >= p.steps.length) {
+      if (p.kind === 'lesson') {
+        this.stopPractice();
+        return;
+      }
+      this.practiceLoops.update((n) => n + 1);
+    }
+    this.practiceIndex.set(((next % p.steps.length) + p.steps.length) % p.steps.length);
+  }
+
+  goToPracticeStep(index: number): void {
+    this.practiceIndex.set(index);
+    if (this.demoPlaying()) this.playStep(index);
+  }
+
+  /** Plays the current target chord once (helps to hear what to aim for). */
+  previewStep(): void {
+    const step = this.practiceStep();
+    if (!step) return;
+    this.stopDemo();
+    this.applyStep(step);
+  }
+
+  toggleDemo(): void {
+    if (this.demoPlaying()) {
+      this.stopDemo();
+      this.activeDegree.set(null);
+      this.audioEngine.stopVoices();
+    } else {
+      this.demoPlaying.set(true);
+      this.playStep(this.practiceIndex());
     }
   }
 
+  private playStep(index: number): void {
+    const p = this.practice();
+    if (!p || !this.demoPlaying()) return;
+    if (this.demoTimer) clearTimeout(this.demoTimer);
+    this.practiceIndex.set(index);
+    this.applyStep(p.steps[index]);
+    const barMs = (60_000 / p.bpm) * 4;
+    this.demoTimer = setTimeout(() => this.playStep((index + 1) % p.steps.length), barMs);
+  }
+
+  private stopDemo(): void {
+    if (this.demoTimer) clearTimeout(this.demoTimer);
+    this.demoTimer = null;
+    this.demoPlaying.set(false);
+  }
+
+  private applyStep(step: PracticeStep): void {
+    this.lastKeyboardInputTime = performance.now();
+    this.activeDegree.set(step.degree);
+    this.isMajor.set(step.major);
+    this.voicingQuality.set(step.voicings?.[0] ?? 1);
+    this.triggerCurrentChord();
+  }
+
+  /** "r,g,b" colour of a degree, for inline styles */
+  degreeColor(degree: string): string {
+    return degreeRgb(degree).join(',');
+  }
+
+  stepChordName(step: PracticeStep): string {
+    return formatNoteName(
+      step.chord ??
+        getChordDisplayName(step.degree, step.major, this.selectedKey(), step.voicings?.[0] ?? 1, 'off', this.selectedScaleMode())
+    );
+  }
+
+  // ================================================================== audio
   private triggerCurrentChord(): void {
     if (!this.audioUnlocked() || !this.started()) return;
 
@@ -558,53 +787,54 @@ export class App implements OnInit, OnDestroy {
       this.semitoneShift(),
       this.selectedScaleMode()
     );
-
     if (!tones) {
       this.audioEngine.stopVoices();
       return;
     }
-
     const voicing = this.isTwoHandedMode() ? this.voicingQuality() : 1;
-    const mult = this.octaveShift();
-    const rawFrequencies = getVoicingFrequencies(tones, voicing, this.isMajor());
-    const finalFrequencies = rawFrequencies.map((f) => f * mult);
+    const frequencies = getVoicingFrequencies(tones, voicing, this.isMajor()).map((f) => f * this.octaveShift());
+    this.audioEngine.playFrequencies(frequencies);
+  }
 
-    this.audioEngine.playFrequencies(finalFrequencies);
+  // =============================================================== rendering
+  private resizeCanvas(): void {
+    if (!this.isBrowser) return;
+    const canvas = this.overlayCanvas()?.nativeElement;
+    if (!canvas) return;
+    // Render at device resolution so lines stay sharp on retina / phone screens
+    this.canvasDpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(window.innerWidth * this.canvasDpr);
+    canvas.height = Math.round(window.innerHeight * this.canvasDpr);
   }
 
   private startRenderLoop(): void {
-    if (!this.isBrowser) return;
-
-    const canvas = this.overlayCanvasRef?.nativeElement;
-    if (canvas) {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-    }
-
+    if (!this.isBrowser || this.animationFrameId !== null) return;
+    this.resizeCanvas();
     const loop = (timestamp: number) => {
       this.renderFrame(timestamp);
       this.animationFrameId = requestAnimationFrame(loop);
     };
-
     this.animationFrameId = requestAnimationFrame(loop);
   }
 
   private renderFrame(timestamp: number): void {
-    const canvas = this.overlayCanvasRef?.nativeElement;
-    const video = this.webcamVideoRef?.nativeElement;
+    const canvas = this.overlayCanvas()?.nativeElement;
+    const video = this.webcamVideo()?.nativeElement;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const width = canvas.width;
-    const height = canvas.height;
+    const dpr = this.canvasDpr;
+    const width = canvas.width / dpr;
+    const height = canvas.height / dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    let videoCrop: { sx: number; sy: number; sWidth: number; sHeight: number } | null = null;
+    let crop: { sx: number; sy: number; sWidth: number; sHeight: number } | null = null;
     let vW = 0;
     let vH = 0;
+    const cameraLive = this.cameraStatus() === 'active' && !!video && video.readyState >= 2;
 
-    // 1. Process webcam if active
-    if (this.cameraStatus() === 'active' && video && video.readyState >= 2) {
+    if (cameraLive && video) {
       vW = video.videoWidth;
       vH = video.videoHeight;
       const vAspect = vW / vH;
@@ -620,229 +850,157 @@ export class App implements OnInit, OnDestroy {
         sHeight = vW / cAspect;
         sy = (vH - sHeight) / 2;
       }
-      videoCrop = { sx, sy, sWidth, sHeight };
+      crop = { sx, sy, sWidth, sHeight };
 
       const frame = this.handTracker.detect(video, timestamp);
       this.liveLeftLandmarks = frame.leftHandLandmarks;
       this.liveRightLandmarks = frame.rightHandLandmarks;
-
-      const hasHands = frame.leftHandLandmarks !== null || frame.rightHandLandmarks !== null;
-      const isRecentKeyboard = timestamp - this.lastKeyboardInputTime < 1400;
-
-      if (hasHands && !isRecentKeyboard) {
-        this.lastHandsSeenTime = timestamp;
-        this.handsDetected.set(true);
-
-        const leftClosed = frame.leftHandLandmarks ? isHandClosed(frame.leftHandLandmarks, 'Left') : false;
-        const rightClosed = frame.rightHandLandmarks ? isHandClosed(frame.rightHandLandmarks, 'Right') : false;
-
-        let detectedDegree: string | null = null;
-        let detectedMajor = this.isMajor();
-        let detectedTilt = this.tiltValue();
-        let isAnyHandClosed = false;
-
-        if (this.isTwoHandedMode()) {
-          // In two-handed mode: if either chord hand is closed or voicing hand is closed (choke/mute), silence!
-          if (leftClosed || (frame.rightHandLandmarks && rightClosed)) {
-            isAnyHandClosed = true;
-            detectedDegree = null;
-          } else if (frame.leftHandLandmarks) {
-            detectedDegree = classifyLeftHandDegree(frame.leftHandLandmarks, 'Left');
-            const tilt = calculateHandTilt(frame.leftHandLandmarks, 'Left');
-            detectedTilt = tilt;
-            detectedMajor = tilt >= 0;
-          }
-        } else {
-          // Single-handed mode
-          if (frame.leftHandLandmarks) {
-            if (leftClosed) {
-              isAnyHandClosed = true;
-              detectedDegree = null;
-            } else {
-              detectedDegree = classifyLeftHandDegree(frame.leftHandLandmarks, 'Left');
-              const tilt = calculateHandTilt(frame.leftHandLandmarks, 'Left');
-              detectedTilt = tilt;
-              detectedMajor = tilt >= 0;
-            }
-          } else if (frame.rightHandLandmarks) {
-            if (rightClosed) {
-              isAnyHandClosed = true;
-              detectedDegree = null;
-            } else {
-              detectedDegree = classifyLeftHandDegree(frame.rightHandLandmarks, 'Right');
-              const tilt = calculateHandTilt(frame.rightHandLandmarks, 'Right');
-              detectedTilt = tilt;
-              detectedMajor = tilt >= 0;
-            }
-          }
-        }
-
-        this.isHandClosed.set(isAnyHandClosed);
-
-        let detectedVoicing = this.voicingQuality();
-        let detectedVol = this.currentVolume();
-        let detectedOctave = this.octaveShift();
-
-        if (frame.rightHandLandmarks && this.isTwoHandedMode()) {
-          const v = classifyRightHandVoicing(frame.rightHandLandmarks);
-          if (v > 0) detectedVoicing = v;
-          detectedVol = calculateVolumeFromHeight(frame.rightHandLandmarks);
-          const rightTilt = calculateHandTilt(frame.rightHandLandmarks, 'Right');
-          detectedTilt = rightTilt;
-          const thumbOut = isThumbExtended(frame.rightHandLandmarks, 'Right');
-          detectedOctave = thumbOut ? 0.5 : 1.0;
-        } else if (frame.leftHandLandmarks) {
-          detectedVol = calculateVolumeFromHeight(frame.leftHandLandmarks);
-        }
-
-        // Process through debouncer to prevent rapid chord jitter
-        const rawResult: GestureDetectionResult = {
-          chordDegree: detectedDegree,
-          isMajorMode: detectedMajor,
-          tiltValue: detectedTilt,
-          qualityIndex: detectedVoicing,
-          octaveMultiplier: detectedOctave,
-          volume: detectedVol,
-          filterFrequency: this.currentFilterFreq(),
-          filterQ: this.currentFilterQ(),
-          leftHandDetected: frame.leftHandLandmarks !== null,
-          rightHandDetected: frame.rightHandLandmarks !== null,
-          leftHandLandmarks: frame.leftHandLandmarks,
-          rightHandLandmarks: frame.rightHandLandmarks,
-          isLeftHandClosed: leftClosed,
-          isRightHandClosed: rightClosed,
-        };
-
-        const smoothed = this.debouncer.process(rawResult, timestamp);
-
-        const chordChanged =
-          smoothed.chordDegree !== this.activeDegree() ||
-          smoothed.isMajorMode !== this.isMajor() ||
-          smoothed.qualityIndex !== this.voicingQuality() ||
-          detectedOctave !== this.octaveShift();
-
-        if (chordChanged) {
-          this.activeDegree.set(smoothed.chordDegree);
-          this.isMajor.set(smoothed.isMajorMode);
-          this.voicingQuality.set(smoothed.qualityIndex);
-          this.octaveShift.set(detectedOctave);
-          this.triggerCurrentChord();
-        } else if (!this.audioEngine.hasActiveVoices() && smoothed.chordDegree) {
-          this.activeDegree.set(smoothed.chordDegree);
-          this.triggerCurrentChord();
-        } else if (!smoothed.chordDegree && this.audioEngine.hasActiveVoices()) {
-          this.activeDegree.set(null);
-          this.audioEngine.stopVoices(true);
-        }
-
-        // Smooth volume & filter updates
-        this.currentVolume.set(smoothed.volume);
-        this.audioEngine.updateVolume(smoothed.volume);
-
-        const sweep = calculateFilterSweep(detectedTilt);
-        this.currentFilterFreq.set(Math.round(sweep.frequency));
-        this.currentFilterQ.set(sweep.q);
-        this.audioEngine.updateFilter(sweep.frequency, sweep.q);
-      } else if (!isRecentKeyboard) {
-        // Se non vede le mani il suono si deve fermare
-        this.isHandClosed.set(false);
-        // Provide 140ms grace buffer to avoid single dropped frame micro-cuts
-        if (timestamp - this.lastHandsSeenTime > 140) {
-          if (this.handsDetected() || this.activeDegree() !== null || this.audioEngine.hasActiveVoices()) {
-            this.handsDetected.set(false);
-            this.activeDegree.set(null);
-            this.audioEngine.stopVoices(true);
-            this.debouncer.reset();
-          }
-        }
-      }
+      if (!this.demoPlaying()) this.processHands(frame, timestamp);
     }
 
-    // 2. Draw Background
+    // Background
     ctx.clearRect(0, 0, width, height);
-
-    if (this.cameraStatus() === 'active' && video && video.readyState >= 2 && videoCrop) {
-      // Draw mirrored video with subtle cinematic gradient overlay
+    if (cameraLive && video && crop) {
       ctx.save();
       ctx.translate(width, 0);
       ctx.scale(-1, 1);
-
-      ctx.drawImage(
-        video,
-        videoCrop.sx,
-        videoCrop.sy,
-        videoCrop.sWidth,
-        videoCrop.sHeight,
-        0,
-        0,
-        width,
-        height
-      );
+      ctx.drawImage(video, crop.sx, crop.sy, crop.sWidth, crop.sHeight, 0, 0, width, height);
       ctx.restore();
-
-      // Vignette & dark mood tint
-      ctx.fillStyle = 'rgba(14, 14, 17, 0.40)';
+      ctx.fillStyle = 'rgba(13, 14, 18, 0.55)';
       ctx.fillRect(0, 0, width, height);
     } else {
-      // Futuristic Dark Grid Canvas
-      ctx.fillStyle = '#0e0e11';
+      ctx.fillStyle = '#0d0e12';
       ctx.fillRect(0, 0, width, height);
-
-      // Radial center ambient glow using active degree color
-      const deg = this.activeDegree() || 'I';
-      const rgb = DEGREE_COLORS[deg.toUpperCase()] || [232, 161, 61];
-      const grad = ctx.createRadialGradient(width / 2, height / 2, 50, width / 2, height / 2, width * 0.6);
-      grad.addColorStop(0, `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, 0.08)`);
-      grad.addColorStop(1, 'rgba(14, 14, 17, 0)');
+      const [r, g, b] = degreeRgb(this.activeDegree());
+      const playing = this.activeDegree() !== null;
+      const grad = ctx.createRadialGradient(width / 2, height * 0.45, 20, width / 2, height * 0.45, Math.max(width, height) * 0.6);
+      grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${playing ? 0.14 : 0.05})`);
+      grad.addColorStop(1, 'rgba(13, 14, 18, 0)');
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, width, height);
+    }
 
-      // Subtle cybernetic dots grid
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.03)';
-      const step = 40;
-      for (let x = 20; x < width; x += step) {
-        for (let y = 20; y < height; y += step) {
-          ctx.beginPath();
-          ctx.arc(x, y, 1, 0, Math.PI * 2);
-          ctx.fill();
+    if (this.liveLeftLandmarks) {
+      const closed = isHandClosed(this.liveLeftLandmarks, 'Left');
+      this.drawHandSkeleton(ctx, this.liveLeftLandmarks, width, height, closed ? '#f87171' : '#f5b544', closed ? 'Sinistra · silenzio' : 'Sinistra · accordo', crop, vW, vH);
+    }
+    if (this.liveRightLandmarks) {
+      const closed = isHandClosed(this.liveRightLandmarks, 'Right');
+      this.drawHandSkeleton(ctx, this.liveRightLandmarks, width, height, closed ? '#f87171' : '#60a5fa', closed ? 'Destra · silenzio' : 'Destra · colore', crop, vW, vH);
+    }
+
+    this.drawScope(ctx, width, height);
+  }
+
+  private processHands(frame: HandDetectionFrame, timestamp: number): void {
+    const hasHands = frame.leftHandLandmarks !== null || frame.rightHandLandmarks !== null;
+    const isRecentKeyboard = timestamp - this.lastKeyboardInputTime < 1400;
+
+    if (hasHands && !isRecentKeyboard) {
+      this.lastHandsSeenTime = timestamp;
+      this.handsDetected.set(true);
+
+      const leftClosed = frame.leftHandLandmarks ? isHandClosed(frame.leftHandLandmarks, 'Left') : false;
+      const rightClosed = frame.rightHandLandmarks ? isHandClosed(frame.rightHandLandmarks, 'Right') : false;
+
+      let detectedDegree: string | null = null;
+      let detectedMajor = this.isMajor();
+      let detectedTilt = this.tiltValue();
+      let anyClosed = false;
+
+      if (this.isTwoHandedMode()) {
+        if (leftClosed || (frame.rightHandLandmarks && rightClosed)) {
+          anyClosed = true;
+        } else if (frame.leftHandLandmarks) {
+          detectedDegree = classifyLeftHandDegree(frame.leftHandLandmarks, 'Left');
+          detectedTilt = calculateHandTilt(frame.leftHandLandmarks, 'Left');
+          detectedMajor = detectedTilt >= 0;
+        }
+      } else {
+        const hand = frame.leftHandLandmarks ?? frame.rightHandLandmarks;
+        const side = frame.leftHandLandmarks ? 'Left' : 'Right';
+        const closed = frame.leftHandLandmarks ? leftClosed : rightClosed;
+        if (hand) {
+          if (closed) {
+            anyClosed = true;
+          } else {
+            detectedDegree = classifyLeftHandDegree(hand, side);
+            detectedTilt = calculateHandTilt(hand, side);
+            detectedMajor = detectedTilt >= 0;
+          }
+        }
+      }
+      this.isHandClosed.set(anyClosed);
+
+      let detectedVoicing = this.voicingQuality();
+      let detectedVol = this.currentVolume();
+      let detectedOctave = this.octaveShift();
+
+      if (frame.rightHandLandmarks && this.isTwoHandedMode()) {
+        const v = classifyRightHandVoicing(frame.rightHandLandmarks);
+        if (v > 0) detectedVoicing = v;
+        detectedVol = calculateVolumeFromHeight(frame.rightHandLandmarks);
+        detectedTilt = calculateHandTilt(frame.rightHandLandmarks, 'Right');
+        detectedOctave = isThumbExtended(frame.rightHandLandmarks, 'Right') ? 0.5 : 1.0;
+      } else if (frame.leftHandLandmarks) {
+        detectedVol = calculateVolumeFromHeight(frame.leftHandLandmarks);
+      }
+
+      const raw: GestureDetectionResult = {
+        chordDegree: detectedDegree,
+        isMajorMode: detectedMajor,
+        tiltValue: detectedTilt,
+        qualityIndex: detectedVoicing,
+        octaveMultiplier: detectedOctave,
+        volume: detectedVol,
+        filterFrequency: this.currentFilterFreq(),
+        filterQ: this.currentFilterQ(),
+        leftHandDetected: frame.leftHandLandmarks !== null,
+        rightHandDetected: frame.rightHandLandmarks !== null,
+        leftHandLandmarks: frame.leftHandLandmarks,
+        rightHandLandmarks: frame.rightHandLandmarks,
+        isLeftHandClosed: leftClosed,
+        isRightHandClosed: rightClosed,
+      };
+      const smoothed = this.debouncer.process(raw, timestamp);
+
+      const chordChanged =
+        smoothed.chordDegree !== this.activeDegree() ||
+        smoothed.isMajorMode !== this.isMajor() ||
+        smoothed.qualityIndex !== this.voicingQuality() ||
+        detectedOctave !== this.octaveShift();
+
+      if (chordChanged) {
+        this.activeDegree.set(smoothed.chordDegree);
+        this.isMajor.set(smoothed.isMajorMode);
+        this.voicingQuality.set(smoothed.qualityIndex);
+        this.octaveShift.set(detectedOctave);
+        this.triggerCurrentChord();
+      } else if (!this.audioEngine.hasActiveVoices() && smoothed.chordDegree) {
+        this.triggerCurrentChord();
+      } else if (!smoothed.chordDegree && this.audioEngine.hasActiveVoices()) {
+        this.activeDegree.set(null);
+        this.audioEngine.stopVoices(true);
+      }
+
+      this.currentVolume.set(smoothed.volume);
+      this.audioEngine.updateVolume(smoothed.volume);
+      const sweep = calculateFilterSweep(detectedTilt);
+      this.currentFilterFreq.set(Math.round(sweep.frequency));
+      this.currentFilterQ.set(sweep.q);
+      this.audioEngine.updateFilter(sweep.frequency, sweep.q);
+    } else if (!isRecentKeyboard) {
+      // No hands in frame: the sound must stop (140 ms grace against dropped frames)
+      this.isHandClosed.set(false);
+      if (timestamp - this.lastHandsSeenTime > 140) {
+        if (this.handsDetected() || this.activeDegree() !== null || this.audioEngine.hasActiveVoices()) {
+          this.handsDetected.set(false);
+          this.activeDegree.set(null);
+          this.audioEngine.stopVoices(true);
+          this.debouncer.reset();
         }
       }
     }
-
-    // 3. Draw Hand Skeletal Tracking (if landmarks present)
-    if (this.liveLeftLandmarks) {
-      const isClosed = isHandClosed(this.liveLeftLandmarks, 'Left');
-      this.drawHandSkeleton(
-        ctx,
-        this.liveLeftLandmarks,
-        width,
-        height,
-        isClosed ? 'rgba(244, 63, 94, 0.9)' : 'rgba(232, 161, 61, 0.85)',
-        isClosed ? 'LEFT HAND • ✊ SILENZIO' : 'LEFT HAND',
-        videoCrop,
-        vW,
-        vH,
-        isClosed
-      );
-    }
-    if (this.liveRightLandmarks) {
-      const isClosed = isHandClosed(this.liveRightLandmarks, 'Right');
-      this.drawHandSkeleton(
-        ctx,
-        this.liveRightLandmarks,
-        width,
-        height,
-        isClosed ? 'rgba(244, 63, 94, 0.9)' : 'rgba(100, 200, 250, 0.85)',
-        isClosed ? 'RIGHT HAND • ✊ SILENZIO' : 'RIGHT HAND',
-        videoCrop,
-        vW,
-        vH,
-        isClosed
-      );
-    }
-
-    // 4. Draw Signature Audio Reactive Waveforms radiating from center
-    this.drawReactiveWaves(ctx, width, height);
   }
 
   private drawHandSkeleton(
@@ -852,119 +1010,104 @@ export class App implements OnInit, OnDestroy {
     height: number,
     color: string,
     label: string,
-    crop: { sx: number; sy: number; sWidth: number; sHeight: number } | null = null,
-    vW = 0,
-    vH = 0,
-    isClosed = false
+    crop: { sx: number; sy: number; sWidth: number; sHeight: number } | null,
+    vW: number,
+    vH: number
   ): void {
     if (!landmarks || landmarks.length < 21) return;
-
-    // Convert mirrored coords: x is inverted because of selfie camera
+    // Mirror x because the video is shown as a selfie
     const pts = landmarks.map((pt) => {
       if (crop && vW > 0 && vH > 0) {
-        const rawPixelX = (1 - pt.x) * vW;
-        const rawPixelY = pt.y * vH;
-        const x = ((rawPixelX - crop.sx) / crop.sWidth) * width;
-        const y = ((rawPixelY - crop.sy) / crop.sHeight) * height;
-        return { x, y };
+        const px = (1 - pt.x) * vW;
+        const py = pt.y * vH;
+        return { x: ((px - crop.sx) / crop.sWidth) * width, y: ((py - crop.sy) / crop.sHeight) * height };
       }
-      return {
-        x: (1 - pt.x) * width,
-        y: pt.y * height,
-      };
+      return { x: (1 - pt.x) * width, y: pt.y * height };
     });
 
-    // Hand connections
-    const fingers = [
-      [0, 1, 2, 3, 4],       // Thumb
-      [0, 5, 6, 7, 8],       // Index
-      [0, 9, 10, 11, 12],    // Middle
-      [0, 13, 14, 15, 16],   // Ring
-      [0, 17, 18, 19, 20],   // Pinky
-      [5, 9, 13, 17],        // Knuckle bridge
+    const chains = [
+      [0, 1, 2, 3, 4],
+      [0, 5, 6, 7, 8],
+      [0, 9, 10, 11, 12],
+      [0, 13, 14, 15, 16],
+      [0, 17, 18, 19, 20],
+      [5, 9, 13, 17],
     ];
 
     ctx.save();
     ctx.strokeStyle = color;
-    ctx.lineWidth = 2.5;
+    ctx.lineWidth = 3;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    ctx.shadowColor = color;
-    ctx.shadowBlur = 10;
-
-    fingers.forEach((chain) => {
+    chains.forEach((chain) => {
       ctx.beginPath();
-      chain.forEach((idx, i) => {
-        const p = pts[idx];
-        if (i === 0) ctx.moveTo(p.x, p.y);
-        else ctx.lineTo(p.x, p.y);
-      });
+      chain.forEach((idx, i) => (i === 0 ? ctx.moveTo(pts[idx].x, pts[idx].y) : ctx.lineTo(pts[idx].x, pts[idx].y)));
       ctx.stroke();
     });
-
-    // Draw joints
+    ctx.fillStyle = '#ffffff';
     pts.forEach((p, i) => {
       ctx.beginPath();
-      const radius = i === 4 || i === 8 || i === 12 || i === 16 || i === 20 ? 5 : 3;
-      ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
-      ctx.fillStyle = isClosed ? '#fda4af' : '#ffffff';
+      ctx.arc(p.x, p.y, [4, 8, 12, 16, 20].includes(i) ? 4.5 : 3, 0, Math.PI * 2);
       ctx.fill();
-      ctx.stroke();
     });
 
-    // Hand Label above palm
+    // Label pill under the wrist
     const wrist = pts[0];
-    ctx.font = isClosed ? 'bold 11px "JetBrains Mono", monospace' : '10px "JetBrains Mono", monospace';
+    ctx.font = '600 12px system-ui, -apple-system, "Segoe UI", sans-serif';
+    const textW = ctx.measureText(label).width;
+    const x = wrist.x - textW / 2 - 10;
+    const y = wrist.y + 16;
+    ctx.fillStyle = 'rgba(13, 14, 18, 0.8)';
+    ctx.beginPath();
+    ctx.roundRect(x, y, textW + 20, 24, 12);
+    ctx.fill();
     ctx.fillStyle = color;
-    ctx.fillText(label, wrist.x - 30, wrist.y + 24);
+    ctx.fillText(label, x + 10, y + 16);
     ctx.restore();
   }
 
-  private drawReactiveWaves(
-    ctx: CanvasRenderingContext2D,
-    width: number,
-    height: number
-  ): void {
-    this.wavePhase += 0.035;
-    const deg = this.activeDegree() || 'I';
-    const [r, g, b] = DEGREE_COLORS[deg.toUpperCase()] || [232, 161, 61];
-    const isPlaying = this.activeDegree() !== null && !this.isAudioMuted();
-
-    const centerX = width / 2;
-    const centerY = height - 120; // Anchored near the bottom chord display
-    const waveCount = 3;
-    const waveLength = width * 0.42;
+  /** Real oscilloscope of the audio output (analyser node), coloured by the chord degree. */
+  private drawScope(ctx: CanvasRenderingContext2D, width: number, height: number): void {
+    this.audioEngine.getWaveformData(this.scopeBuffer);
+    const [r, g, b] = degreeRgb(this.activeDegree());
+    const playing = this.activeDegree() !== null && !this.isAudioMuted();
+    const centerY = height * 0.5;
+    const amp = Math.min(height * 0.16, 120);
+    const data = this.scopeBuffer;
+    const n = data.length;
 
     ctx.save();
-
-    for (let w = 0; w < waveCount; w++) {
-      const direction = [1, -1]; // radiating both right and left
-      direction.forEach((dir) => {
-        ctx.beginPath();
-        const startX = centerX + dir * 80;
-        ctx.moveTo(startX, centerY);
-
-        const segments = 40;
-        const amplitude = isPlaying ? (12 + w * 9) * this.currentVolume() : 3;
-        const freqFactor = (w + 1) * 2.2;
-
-        for (let i = 0; i <= segments; i++) {
-          const t = i / segments;
-          const x = startX + dir * (t * waveLength);
-          const envelope = Math.sin(t * Math.PI); // Smooth pinch at endpoints
-          const y = centerY + Math.sin(t * freqFactor * Math.PI + this.wavePhase + w) * amplitude * envelope;
-          ctx.lineTo(x, y);
-        }
-
-        const alpha = isPlaying ? 0.8 - w * 0.22 : 0.15;
-        ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
-        ctx.lineWidth = 2.5 - w * 0.5;
-        ctx.shadowColor = `rgba(${r}, ${g}, ${b}, 0.6)`;
-        ctx.shadowBlur = 12;
-        ctx.stroke();
-      });
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const t = i / (n - 1);
+      // Fade the trace at both edges
+      const edge = Math.sin(t * Math.PI);
+      const y = centerY + ((data[i] - 128) / 128) * amp * 2.2 * edge;
+      const x = t * width;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
     }
-
+    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${playing ? 0.55 : 0.12})`;
+    ctx.lineWidth = 2;
+    ctx.stroke();
     ctx.restore();
+  }
+
+  // ================================================================= helpers
+  private markOnboardingSeen(): void {
+    this.onboardingSeen.set(true);
+    try {
+      localStorage.setItem(ONBOARDING_KEY, '1');
+    } catch {
+      // private mode: ignore
+    }
+  }
+
+  private safeStorageGet(key: string): string | null {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
   }
 }

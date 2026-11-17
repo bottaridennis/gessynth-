@@ -8,7 +8,7 @@ export type HandSide = 'Left' | 'Right';
 
 export interface GestureDetectionResult {
   chordDegree: string | null;      // 'I', 'II', ..., 'VII' or null
-  isMajorMode: boolean;            // true = Major (↗️), false = Minor (↖️)
+  isMajorMode: boolean;            // true = Major (tilt right), false = Minor (tilt left)
   tiltValue: number;               // -1.0 to +1.0
   qualityIndex: number;            // 1 (Root), 2 (1st), 3 (Maj/Min 7), 4 (Dom/Dim 7), 0 (Closed / Mute)
   octaveMultiplier: number;        // 0.5 (low), 1.0 (mid), 2.0 (high)

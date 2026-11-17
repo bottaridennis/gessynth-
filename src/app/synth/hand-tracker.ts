@@ -13,6 +13,31 @@ const MODEL_PATH =
   'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 const CDN_WASM_PATH = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MEDIAPIPE_VERSION}/wasm`;
 
+/**
+ * Maps MediaPipe results to the user's physical hands.
+ *
+ * MediaPipe labels handedness assuming a mirrored (selfie) image. The webcam frames
+ * we feed it are NOT mirrored, so the labels are swapped: "Left" is the user's
+ * right hand and vice versa. The gesture classifier works in raw camera coordinates
+ * for the physical hand side, so we swap here once.
+ */
+export function assignHands(
+  landmarks: Landmark[][] | undefined,
+  handedness: { categoryName: string; score?: number }[][] | undefined
+): { leftHand: Landmark[] | null; rightHand: Landmark[] | null } {
+  let leftHand: Landmark[] | null = null;
+  let rightHand: Landmark[] | null = null;
+  (landmarks ?? []).forEach((hand, idx) => {
+    const label = handedness?.[idx]?.[0]?.categoryName;
+    if (label === 'Left' && !rightHand) {
+      rightHand = hand;
+    } else if (label === 'Right' && !leftHand) {
+      leftHand = hand;
+    }
+  });
+  return { leftHand, rightHand };
+}
+
 export class HandTrackerService {
   private handLandmarker: unknown = null;
   private isLoaded = false;
@@ -166,19 +191,7 @@ export class HandTrackerService {
       };
 
       const results = landmarker.detectForVideo(videoElement, timestamp);
-      let leftHand: Landmark[] | null = null;
-      let rightHand: Landmark[] | null = null;
-
-      if (results && results.landmarks && results.landmarks.length > 0) {
-        results.landmarks.forEach((handLandmarks, idx) => {
-          const category = results.handedness[idx]?.[0]?.categoryName;
-          if (category === 'Left') {
-            leftHand = handLandmarks;
-          } else if (category === 'Right') {
-            rightHand = handLandmarks;
-          }
-        });
-      }
+      const { leftHand, rightHand } = assignHands(results.landmarks, results.handedness);
 
       this.lastCachedFrame = {
         leftHandLandmarks: leftHand,

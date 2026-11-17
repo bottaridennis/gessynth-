@@ -1,0 +1,22 @@
+{
+  "name": "Gesture Synth",
+  "short_name": "Gesture Synth",
+  "description": "Sintetizzatore di accordi controllato dai gesti delle mani, con libreria di brani e tastiera virtuale.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "any",
+  "background_color": "#0d0e12",
+  "theme_color": "#0d0e12",
+  "lang": "it",
+  "dir": "ltr",
+  "categories": ["music", "entertainment", "education"],
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "icons/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
