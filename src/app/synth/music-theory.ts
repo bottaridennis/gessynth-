@@ -36,81 +36,81 @@ export interface ScaleModeInfo {
 export const SCALE_MODES: ScaleModeInfo[] = [
   {
     id: 'major',
-    name: 'Major (Ionian)',
+    name: 'Maggiore (ionica)',
     category: 'Standard',
-    description: 'Bright, cheerful, classic harmonic foundation',
+    description: 'Luminosa e solare: la base dell’armonia classica',
     defaultMajor: true,
     intervals: [0, 2, 4, 5, 7, 9, 11],
   },
   {
     id: 'minor',
-    name: 'Natural Minor (Aeolian)',
+    name: 'Minore naturale (eolia)',
     category: 'Standard',
-    description: 'Soulful, contemplative, melancholic emotion',
+    description: 'Intensa e malinconica',
     defaultMajor: false,
     intervals: [0, 2, 3, 5, 7, 8, 10],
   },
   {
     id: 'dorian',
-    name: 'Dorian',
+    name: 'Dorica',
     category: 'Modal',
-    description: 'Smooth neo-soul, jazz & funk with a raised 6th',
+    description: 'Morbida, neo-soul, jazz e funk (sesta alzata)',
     defaultMajor: false,
     intervals: [0, 2, 3, 5, 7, 9, 10],
   },
   {
     id: 'mixolydian',
-    name: 'Mixolydian',
+    name: 'Misolidia',
     category: 'Modal',
-    description: 'Bluesy, optimistic rock groove with flattened 7th',
+    description: 'Rock e blues ottimista (settima abbassata)',
     defaultMajor: true,
     intervals: [0, 2, 4, 5, 7, 9, 10],
   },
   {
     id: 'lydian',
-    name: 'Lydian',
+    name: 'Lidia',
     category: 'Modal',
-    description: 'Dreamy, ethereal, spacey cinema sound with #4',
+    description: 'Sognante e cinematografica (quarta aumentata)',
     defaultMajor: true,
     intervals: [0, 2, 4, 6, 7, 9, 11],
   },
   {
     id: 'phrygian',
-    name: 'Phrygian',
+    name: 'Frigia',
     category: 'Modal',
-    description: 'Dark, mystical Spanish/flamenco mood with flat 2nd',
+    description: 'Scura, sapore flamenco (seconda abbassata)',
     defaultMajor: false,
     intervals: [0, 1, 3, 5, 7, 8, 10],
   },
   {
     id: 'harmonic_minor',
-    name: 'Harmonic Minor',
+    name: 'Minore armonica',
     category: 'Standard',
-    description: 'Neo-classical, dramatic Baroque tension with raised 7th',
+    description: 'Drammatica, neoclassica (settima alzata)',
     defaultMajor: false,
     intervals: [0, 2, 3, 5, 7, 8, 11],
   },
   {
     id: 'pentatonic_major',
-    name: 'Major Pentatonic',
+    name: 'Pentatonica maggiore',
     category: 'Pentatonic',
-    description: 'Universally harmonious, folk & blues 5-note purity',
+    description: 'Cinque note sempre consonanti: folk e blues',
     defaultMajor: true,
     intervals: [0, 2, 4, 7, 9, 12, 14],
   },
   {
     id: 'pentatonic_minor',
-    name: 'Minor Pentatonic',
+    name: 'Pentatonica minore',
     category: 'Pentatonic',
-    description: 'Raw blues, rock and soul pentatonic backbone',
+    description: 'La spina dorsale di blues, rock e soul',
     defaultMajor: false,
     intervals: [0, 3, 5, 7, 10, 12, 15],
   },
   {
     id: 'hirajoshi',
-    name: 'Hirajoshi (Japanese)',
+    name: 'Hirajoshi (giapponese)',
     category: 'Exotic',
-    description: 'Traditional Japanese meditative pentatonic tranquility',
+    description: 'Pentatonica tradizionale giapponese, meditativa',
     defaultMajor: false,
     intervals: [0, 2, 3, 7, 8, 12, 14],
   },
@@ -230,13 +230,13 @@ export const DEGREE_MAP: Record<string, number> = {
 
 // Color accents for each degree
 export const DEGREE_COLORS: Record<string, [number, number, number]> = {
-  I: [232, 161, 61],   // Gold / Amber
-  II: [210, 50, 120],  // Magenta / Rose
-  III: [180, 40, 150], // Deep Violet
-  IV: [240, 210, 40],  // Electric Yellow
-  V: [245, 120, 30],   // Vibrant Orange
-  VI: [230, 40, 40],   // Crimson Red
-  VII: [100, 200, 250], // Cyan Sky
+  I: [245, 181, 68], // amber
+  II: [244, 114, 152], // rose
+  III: [167, 139, 250], // violet
+  IV: [45, 212, 191], // teal
+  V: [96, 165, 250], // sky
+  VI: [251, 146, 60], // coral
+  VII: [163, 230, 53], // lime
 };
 
 /**
@@ -377,34 +377,99 @@ export function getChordDisplayName(
   mode: ScaleMode = 'major'
 ): string {
   if (!degree || degree === '--') return '--';
-  const degreeIndex = DEGREE_MAP[degree.toUpperCase()];
-  if (!degreeIndex) return '--';
+  const root = getDegreeRootName(key, mode, degree, semitoneShift);
+  if (!root) return '--';
 
-  const scale = getScaleNotes(key, mode);
-  let noteName = scale[degreeIndex - 1] || 'C';
-
-  // Shift on the chromatic circle instead of appending accidentals
-  // (avoids names like "C#b" or "Bb#")
-  if (semitoneShift !== 'off') {
-    const sharpIdx = SHARP_NAMES.indexOf(noteName);
-    const idx = sharpIdx >= 0 ? sharpIdx : FLAT_NAMES.indexOf(noteName);
-    if (idx >= 0) {
-      const raise = semitoneShift === 'raise';
-      noteName = (raise ? SHARP_NAMES : FLAT_NAMES)[(idx + (raise ? 1 : -1) + 12) % 12];
-    }
+  // Standard lead-sheet notation: C, Cm, C/E, Cmaj7, C7, Cm7, Cdim7
+  switch (qualityIndex) {
+    case 2:
+      return `${root}${isMajor ? '' : 'm'}/${spellNote(root, 2, isMajor ? 4 : 3)}`;
+    case 3:
+      return isMajor ? `${root}maj7` : `${root}m7`;
+    case 4:
+      return isMajor ? `${root}7` : `${root}dim7`;
+    default:
+      return isMajor ? root : `${root}m`;
   }
-
-  const baseName = isMajor ? noteName : `${noteName}m`;
-
-  let extension = '';
-  if (qualityIndex === 2) {
-    extension = ' (1st)';
-  } else if (qualityIndex === 3) {
-    extension = isMajor ? ' Maj 7' : ' 7';
-  } else if (qualityIndex === 4) {
-    extension = isMajor ? ' 7' : ' dim 7';
-  }
-
-  return `${baseName}${extension}`;
 }
 
+
+export const ROMAN_DEGREES: ChordDegree[] = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII'];
+
+/**
+ * Spells the note that lies `letterSteps` letters and `semitones` semitones above `root`
+ * (e.g. root "B", 2 letters, 4 semitones -> "D#").
+ */
+export function spellNote(root: string, letterSteps: number, semitones: number): string {
+  const rootLetter = root[0];
+  const rootAcc = root.slice(1);
+  const accValue = [...rootAcc].reduce((acc, ch) => acc + (ch === '#' ? 1 : ch === 'b' ? -1 : 0), 0);
+  const rootPc = (LETTER_PC[rootLetter] + accValue + 12) % 12;
+  const letter = LETTERS[(LETTERS.indexOf(rootLetter) + letterSteps) % 7];
+  const targetPc = (rootPc + semitones) % 12;
+  let diff = (targetPc - LETTER_PC[letter] + 12) % 12;
+  if (diff > 6) diff -= 12;
+  if (diff === 0) return letter;
+  return letter + (diff > 0 ? '#'.repeat(diff) : 'b'.repeat(-diff));
+}
+
+/** Root note name of a scale degree, including the optional global semitone shift. */
+export function getDegreeRootName(
+  key: KeySignature,
+  mode: ScaleMode,
+  degree: string,
+  semitoneShift: SemitoneShift = 'off'
+): string | null {
+  const degreeIndex = DEGREE_MAP[degree.toUpperCase()];
+  if (!degreeIndex) return null;
+  const name = getScaleNotes(key, mode)[degreeIndex - 1] ?? 'C';
+  if (semitoneShift === 'off') return name;
+  // Shift on the chromatic circle instead of appending accidentals ("C#b", "Bb#")
+  const sharpIdx = SHARP_NAMES.indexOf(name);
+  const idx = sharpIdx >= 0 ? sharpIdx : FLAT_NAMES.indexOf(name);
+  if (idx < 0) return name;
+  const raise = semitoneShift === 'raise';
+  return (raise ? SHARP_NAMES : FLAT_NAMES)[(idx + (raise ? 1 : -1) + 12) % 12];
+}
+
+/**
+ * Note names actually sounding in a chord, ordered from the bass up
+ * (matches getVoicingFrequencies: 1 root, 2 first inversion, 3 seventh, 4 dom7 / dim7).
+ */
+export function getChordNotes(
+  degree: string | null,
+  isMajor: boolean,
+  key: KeySignature,
+  qualityIndex = 1,
+  semitoneShift: SemitoneShift = 'off',
+  mode: ScaleMode = 'major'
+): string[] {
+  if (!degree) return [];
+  const root = getDegreeRootName(key, mode, degree, semitoneShift);
+  if (!root) return [];
+  const third = spellNote(root, 2, isMajor ? 4 : 3);
+  const fifth = spellNote(root, 4, 7);
+  switch (qualityIndex) {
+    case 2:
+      return [third, fifth, root];
+    case 3:
+      return [root, third, fifth, spellNote(root, 6, isMajor ? 11 : 10)];
+    case 4:
+      return isMajor
+        ? [root, third, fifth, spellNote(root, 6, 10)]
+        : [root, third, spellNote(root, 4, 6), spellNote(root, 6, 9)];
+    default:
+      return [root, third, fifth];
+  }
+}
+
+/**
+ * Typographic accidentals for display: "F#m7" -> "F♯m7", "Bb/D" -> "B♭/D".
+ * Only accidentals that directly follow a note letter are converted.
+ */
+export function formatNoteName(name: string): string {
+  if (!name) return name;
+  return name.replace(/([A-G])([#b]+)/g, (_m, letter: string, acc: string) =>
+    letter + acc.replace(/#/g, '\u266F').replace(/b/g, '\u266D')
+  );
+}

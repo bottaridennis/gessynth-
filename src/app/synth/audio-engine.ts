@@ -177,20 +177,20 @@ export const PRESET_DEFAULT_PARAMS: Record<InstrumentPreset, SoundCustomParams> 
 };
 
 export const INSTRUMENT_PRESETS: PresetInfo[] = [
-  { id: 'warm', name: 'Warm Analog', category: 'Synth', icon: 'waves', description: 'Smooth, warm analog tone with rich fundamental' },
-  { id: 'bright', name: 'Neon Lead', category: 'Synth', icon: 'bolt', description: 'Crisp saw lead with dynamic filter sweep' },
-  { id: 'retro', name: '80s Arcade', category: 'Synth', icon: 'videogame_asset', description: 'Classic chiptune pulse square wave with sub-bass' },
-  { id: 'strings', name: 'Strings 🎻', category: 'Acoustic', icon: 'music_note', description: 'Lush ensemble pad with multi-voice detuning' },
-  { id: 'horns', name: 'Brass Horns 🎺', category: 'Acoustic', icon: 'campaign', description: 'Bold brass section with rich harmonic bite' },
-  { id: 'ambient', name: 'Ambient Shimmer', category: 'Atmosphere', icon: 'grain', description: 'Dreamy floating atmosphere with fifth overtones' },
-  { id: 'epiano', name: 'Rhodes Keys 🎹', category: 'Acoustic', icon: 'piano', description: 'Velvety electric piano tines with warm bell attack' },
-  { id: 'sub_bass', name: '808 Sub-Bass 🔊', category: 'Bass & Lead', icon: 'speaker', description: 'Deep floor-shaking low end with sine weight' },
-  { id: 'pluck', name: 'Celtic Pluck 🪕', category: 'Acoustic', icon: 'auto_awesome', description: 'Bright percussive acoustic pluck with crystalline ring' },
-  { id: 'lofi', name: 'Lo-Fi Chill 📻', category: 'Atmosphere', icon: 'radio', description: 'Mellow tape-warmed keys with gentle flutter' },
-  { id: 'acid', name: 'Acid 303 ⚡', category: 'Bass & Lead', icon: 'flash_on', description: 'Aggressive resonant acid filter bite with sub punch' },
-  { id: 'bell', name: 'Glass Chimes 🔔', category: 'Atmosphere', icon: 'notifications', description: 'Ethereal crystalline harmonic bells with long sustain' },
-  { id: 'organ', name: 'Gospel Organ ⛪', category: 'Acoustic', icon: 'church', description: 'Rich drawbar organ harmonics with subtle vibrato' },
-  { id: 'pad_flute', name: 'Breath Flute 🪈', category: 'Atmosphere', icon: 'air', description: 'Soft airy woodwind pad with gentle organic attack' },
+  { id: 'warm', name: 'Analogico caldo', category: 'Synth', icon: 'wave', description: 'Tono morbido e pieno, ottimo per iniziare' },
+  { id: 'bright', name: 'Lead brillante', category: 'Synth', icon: 'wave', description: 'Due dente di sega leggermente scordate' },
+  { id: 'retro', name: 'Arcade anni 80', category: 'Synth', icon: 'wave', description: 'Onda quadra chiptune con sub-basso' },
+  { id: 'strings', name: 'Archi', category: 'Acoustic', icon: 'wave', description: 'Ensemble ampio con tre voci scordate' },
+  { id: 'horns', name: 'Ottoni', category: 'Acoustic', icon: 'wave', description: 'Sezione fiati decisa e ricca di armoniche' },
+  { id: 'ambient', name: 'Ambient', category: 'Atmosphere', icon: 'wave', description: 'Atmosfera sospesa con quinta sovrapposta' },
+  { id: 'epiano', name: 'Piano elettrico', category: 'Acoustic', icon: 'wave', description: 'Timbro vellutato in stile Rhodes' },
+  { id: 'sub_bass', name: 'Sub-basso 808', category: 'Bass & Lead', icon: 'wave', description: 'Basse frequenze profonde, usa le cuffie' },
+  { id: 'pluck', name: 'Pizzicato', category: 'Acoustic', icon: 'wave', description: 'Attacco percussivo e cristallino' },
+  { id: 'lofi', name: 'Lo-fi', category: 'Atmosphere', icon: 'wave', description: 'Tastiere morbide con leggero flutter' },
+  { id: 'acid', name: 'Acid', category: 'Bass & Lead', icon: 'wave', description: 'Filtro risonante aggressivo' },
+  { id: 'bell', name: 'Campane di vetro', category: 'Atmosphere', icon: 'wave', description: 'Armoniche inarmoniche, coda lunga' },
+  { id: 'organ', name: 'Organo', category: 'Acoustic', icon: 'wave', description: 'Registri drawbar ricchi di armoniche' },
+  { id: 'pad_flute', name: 'Flauto pad', category: 'Atmosphere', icon: 'wave', description: 'Pad arioso con attacco dolce' },
 ];
 
 interface ActiveVoice {
@@ -204,6 +204,26 @@ interface ActiveVoice {
  * Generates a smooth soft-clipping saturation curve for the reverb feedback loop.
  * Guarantees mathematical impossibility of runaway oscillation.
  */
+/** RMS level of each periodic waveform at unit amplitude (used for loudness normalisation). */
+const WAVE_RMS: Record<OscillatorType, number> = {
+  sine: Math.SQRT1_2,
+  triangle: 1 / Math.sqrt(3),
+  sawtooth: 1 / Math.sqrt(3),
+  square: 1,
+  custom: Math.SQRT1_2,
+};
+
+/** Freezes an AudioParam at its current (automated) value before a new ramp. */
+function holdCurrentValue(param: AudioParam, time: number): void {
+  const p = param as AudioParam & { cancelAndHoldAtTime?: (t: number) => AudioParam };
+  if (typeof p.cancelAndHoldAtTime === 'function') {
+    p.cancelAndHoldAtTime(time);
+  } else {
+    param.cancelScheduledValues(time);
+    param.setValueAtTime(param.value, time);
+  }
+}
+
 function createSoftClipCurve(samples = 512): Float32Array {
   const curve = new Float32Array(samples);
   for (let i = 0; i < samples; ++i) {
@@ -223,6 +243,7 @@ export class AudioEngine {
   private filterCompGain: GainNode | null = null;
   private masterGain: GainNode | null = null;
   private masterLimiter: DynamicsCompressorNode | null = null;
+  private subsonicFilter: BiquadFilterNode | null = null;
   private analyser: AnalyserNode | null = null;
 
   // Safe Spatial Reverb / Stereo Ping-Pong Network
@@ -271,7 +292,17 @@ export class AudioEngine {
       (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     if (!AudioContextClass) return;
 
-    this.ctx = new AudioContextClass();
+    // iOS: play through the ringer/silent switch like a music app
+    const nav = navigator as Navigator & { audioSession?: { type: string } };
+    if (nav.audioSession) {
+      try {
+        nav.audioSession.type = 'playback';
+      } catch {
+        // not supported
+      }
+    }
+
+    this.ctx = new AudioContextClass({ latencyHint: 'interactive' });
     const now = this.ctx.currentTime;
 
     // 1. Master Lowpass Filter
@@ -390,7 +421,13 @@ export class AudioEngine {
     this.masterLimiter.attack.setValueAtTime(0.002, now);    // 2ms ultra-fast response
     this.masterLimiter.release.setValueAtTime(0.08, now);
 
-    this.masterGain.connect(this.masterLimiter);
+    // Subsonic / DC protection: keeps small speakers clean when sub-osc + low octave stack up
+    this.subsonicFilter = this.ctx.createBiquadFilter();
+    this.subsonicFilter.type = 'highpass';
+    this.subsonicFilter.frequency.setValueAtTime(30, now);
+    this.subsonicFilter.Q.setValueAtTime(0.707, now);
+    this.masterGain.connect(this.subsonicFilter);
+    this.subsonicFilter.connect(this.masterLimiter);
 
     // 5. Analyser node for visualizer & meters
     this.analyser = this.ctx.createAnalyser();
@@ -561,6 +598,11 @@ export class AudioEngine {
 
     voiceGain.connect(this.filter);
 
+    // Oscillators go through a mix bus that is normalised by their combined RMS,
+    // so every preset/waveform plays at a similar perceived loudness.
+    const mix = this.ctx.createGain();
+    mix.connect(voiceGain);
+
     const oscillators: OscillatorNode[] = [];
     const detuneCents = this.customParams.detune;
     const waveOverride = this.customParams.waveform;
@@ -581,8 +623,8 @@ export class AudioEngine {
         osc2.frequency.setValueAtTime(frequency, now);
         osc2.detune.setValueAtTime(detuneCents, now);
 
-        osc1.connect(voiceGain);
-        osc2.connect(voiceGain);
+        osc1.connect(mix);
+        osc2.connect(mix);
         osc1.start(now);
         osc2.start(now);
         oscillators.push(osc1, osc2);
@@ -599,8 +641,8 @@ export class AudioEngine {
         osc2.frequency.setValueAtTime(frequency, now);
         osc2.detune.setValueAtTime(-detuneCents, now);
 
-        osc1.connect(voiceGain);
-        osc2.connect(voiceGain);
+        osc1.connect(mix);
+        osc2.connect(mix);
         osc1.start(now);
         osc2.start(now);
         oscillators.push(osc1, osc2);
@@ -617,8 +659,8 @@ export class AudioEngine {
         osc2.frequency.setValueAtTime(frequency, now);
         osc2.detune.setValueAtTime(detuneCents, now);
 
-        osc1.connect(voiceGain);
-        osc2.connect(voiceGain);
+        osc1.connect(mix);
+        osc2.connect(mix);
         osc1.start(now);
         osc2.start(now);
         oscillators.push(osc1, osc2);
@@ -632,7 +674,7 @@ export class AudioEngine {
           osc.type = resolveWave(detune === 0 ? 'sawtooth' : 'triangle');
           osc.frequency.setValueAtTime(frequency, now);
           osc.detune.setValueAtTime(detune, now);
-          osc.connect(voiceGain);
+          osc.connect(mix);
           osc.start(now);
           oscillators.push(osc);
         });
@@ -649,8 +691,8 @@ export class AudioEngine {
         osc2.frequency.setValueAtTime(frequency * 2, now);
         osc2.detune.setValueAtTime(-detuneCents, now);
 
-        osc1.connect(voiceGain);
-        osc2.connect(voiceGain);
+        osc1.connect(mix);
+        osc2.connect(mix);
         osc1.start(now);
         osc2.start(now);
         oscillators.push(osc1, osc2);
@@ -667,8 +709,8 @@ export class AudioEngine {
         osc2.frequency.setValueAtTime(frequency * 1.5, now);
         osc2.detune.setValueAtTime(detuneCents, now);
 
-        osc1.connect(voiceGain);
-        osc2.connect(voiceGain);
+        osc1.connect(mix);
+        osc2.connect(mix);
         osc1.start(now);
         osc2.start(now);
         oscillators.push(osc1, osc2);
@@ -685,8 +727,8 @@ export class AudioEngine {
         osc2.frequency.setValueAtTime(frequency * 2, now);
         osc2.detune.setValueAtTime(detuneCents, now);
 
-        osc1.connect(voiceGain);
-        osc2.connect(voiceGain);
+        osc1.connect(mix);
+        osc2.connect(mix);
         osc1.start(now);
         osc2.start(now);
         oscillators.push(osc1, osc2);
@@ -703,8 +745,8 @@ export class AudioEngine {
         osc2.frequency.setValueAtTime(frequency, now);
         osc2.detune.setValueAtTime(2, now);
 
-        osc1.connect(voiceGain);
-        osc2.connect(voiceGain);
+        osc1.connect(mix);
+        osc2.connect(mix);
         osc1.start(now);
         osc2.start(now);
         oscillators.push(osc1, osc2);
@@ -721,8 +763,8 @@ export class AudioEngine {
         osc2.frequency.setValueAtTime(frequency * 2, now);
         osc2.detune.setValueAtTime(-detuneCents, now);
 
-        osc1.connect(voiceGain);
-        osc2.connect(voiceGain);
+        osc1.connect(mix);
+        osc2.connect(mix);
         osc1.start(now);
         osc2.start(now);
         oscillators.push(osc1, osc2);
@@ -739,8 +781,8 @@ export class AudioEngine {
         osc2.frequency.setValueAtTime(frequency, now);
         osc2.detune.setValueAtTime(detuneCents * 1.5, now);
 
-        osc1.connect(voiceGain);
-        osc2.connect(voiceGain);
+        osc1.connect(mix);
+        osc2.connect(mix);
         osc1.start(now);
         osc2.start(now);
         oscillators.push(osc1, osc2);
@@ -757,8 +799,8 @@ export class AudioEngine {
         osc2.frequency.setValueAtTime(frequency, now);
         osc2.detune.setValueAtTime(4, now);
 
-        osc1.connect(voiceGain);
-        osc2.connect(voiceGain);
+        osc1.connect(mix);
+        osc2.connect(mix);
         osc1.start(now);
         osc2.start(now);
         oscillators.push(osc1, osc2);
@@ -775,8 +817,8 @@ export class AudioEngine {
         osc2.frequency.setValueAtTime(frequency * 2.76, now);
         osc2.detune.setValueAtTime(detuneCents, now);
 
-        osc1.connect(voiceGain);
-        osc2.connect(voiceGain);
+        osc1.connect(mix);
+        osc2.connect(mix);
         osc1.start(now);
         osc2.start(now);
         oscillators.push(osc1, osc2);
@@ -791,7 +833,7 @@ export class AudioEngine {
           osc.type = resolveWave(idx % 2 === 0 ? 'sine' : 'triangle');
           osc.frequency.setValueAtTime(frequency * h, now);
           osc.detune.setValueAtTime(idx * 2, now);
-          osc.connect(voiceGain);
+          osc.connect(mix);
           osc.start(now);
           oscillators.push(osc);
         });
@@ -808,14 +850,17 @@ export class AudioEngine {
         osc2.frequency.setValueAtTime(frequency, now);
         osc2.detune.setValueAtTime(detuneCents, now);
 
-        osc1.connect(voiceGain);
-        osc2.connect(voiceGain);
+        osc1.connect(mix);
+        osc2.connect(mix);
         osc1.start(now);
         osc2.start(now);
         oscillators.push(osc1, osc2);
         break;
       }
     }
+
+    const sumSquares = oscillators.reduce((acc, osc) => acc + WAVE_RMS[osc.type] ** 2, 0);
+    mix.gain.setValueAtTime(sumSquares > 0 ? WAVE_RMS.sine / Math.sqrt(sumSquares) : 1, now);
 
     // Optional Sub-Oscillator (-1 Octave)
     if (this.customParams.subOsc) {
@@ -850,10 +895,10 @@ export class AudioEngine {
 
     this.activeVoices.forEach((voice) => {
       try {
-        voice.gainNode.gain.cancelScheduledValues(now);
-        // Using setTargetAtTime avoids Web Audio exponentialRamp zero-value exceptions
-        voice.gainNode.gain.setValueAtTime(voice.gainNode.gain.value, now);
-        voice.gainNode.gain.setTargetAtTime(0.0, now, releaseTime / 3.2);
+        holdCurrentValue(voice.gainNode.gain, now);
+        // Exponential approach: after `releaseTime` the level is e^-5 (< 1%), so the
+        // hard oscillator stop below is inaudible (no click)
+        voice.gainNode.gain.setTargetAtTime(0.0, now, releaseTime / 5);
 
         // Schedule deterministic hardware stop on audio thread
         voice.oscillators.forEach((osc) => {
@@ -896,17 +941,17 @@ export class AudioEngine {
     [...this.activeVoices, ...this.releasingVoices].forEach((voice) => {
       if (voice.stopTimerId) clearTimeout(voice.stopTimerId);
       try {
-        voice.gainNode.gain.cancelScheduledValues(now);
-        voice.gainNode.gain.setValueAtTime(0, now);
+        // 8 ms fade instead of a hard cut avoids a click even on panic
+        holdCurrentValue(voice.gainNode.gain, now);
+        voice.gainNode.gain.linearRampToValueAtTime(0, now + 0.008);
         voice.oscillators.forEach((osc) => {
           try {
-            osc.stop(now);
-            osc.disconnect();
+            osc.stop(now + 0.01);
           } catch {
             // stopped
           }
         });
-        voice.gainNode.disconnect();
+        setTimeout(() => this.destroyVoiceNodes(voice), 40);
       } catch {
         // ignore
       }

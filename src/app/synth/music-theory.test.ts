@@ -8,6 +8,9 @@ import {
   KEY_BASE_FREQUENCIES,
   SCALE_NOTES,
   getScaleNotes,
+  getChordNotes,
+  spellNote,
+  formatNoteName,
 } from './music-theory';
 
 test('Key scales contain 7 diatonic notes', () => {
@@ -54,10 +57,13 @@ test('getVoicingFrequencies returns 4 voices per chord quality', () => {
 test('getChordDisplayName produces accurate chord labels', () => {
   assert.equal(getChordDisplayName('I', true, 'C', 1), 'C');
   assert.equal(getChordDisplayName('I', false, 'A', 1), 'Am');
-  assert.equal(getChordDisplayName('I', true, 'C', 3), 'C Maj 7');
+  assert.equal(getChordDisplayName('I', true, 'C', 3), 'Cmaj7');
   assert.equal(getChordDisplayName('IV', true, 'A', 1), 'D');
   assert.equal(getChordDisplayName('IV', false, 'A', 1), 'Dm');
-  assert.equal(getChordDisplayName('I', true, 'C', 4), 'C 7');
+  assert.equal(getChordDisplayName('I', true, 'C', 4), 'C7');
+  assert.equal(getChordDisplayName('I', false, 'A', 3), 'Am7');
+  assert.equal(getChordDisplayName('I', false, 'A', 4), 'Adim7');
+  assert.equal(getChordDisplayName('I', true, 'C', 2), 'C/E');
 });
 
 test('ScaleMode and getScaleNotes produce correct modal notes', () => {
@@ -115,4 +121,26 @@ test('getScaleNotes uses correct enharmonic spelling', () => {
   assert.deepEqual(getScaleNotes('Gb', 'major'), ['Gb', 'Ab', 'Bb', 'Cb', 'Db', 'Eb', 'F']);
   assert.deepEqual(getScaleNotes('C', 'minor'), ['C', 'D', 'Eb', 'F', 'G', 'Ab', 'Bb']);
   assert.deepEqual(getScaleNotes('A', 'harmonic_minor'), ['A', 'B', 'C', 'D', 'E', 'F', 'G#']);
+});
+
+test('spellNote spells intervals by letter', () => {
+  assert.equal(spellNote('B', 2, 4), 'D#');
+  assert.equal(spellNote('Eb', 2, 3), 'Gb');
+  assert.equal(spellNote('F#', 4, 7), 'C#');
+  assert.equal(spellNote('C', 6, 9), 'Bbb');
+});
+
+test('getChordNotes returns the sounding notes of each voicing', () => {
+  assert.deepEqual(getChordNotes('III', true, 'G', 1), ['B', 'D#', 'F#']);
+  assert.deepEqual(getChordNotes('IV', false, 'G', 1), ['C', 'Eb', 'G']);
+  assert.deepEqual(getChordNotes('I', true, 'C', 2), ['E', 'G', 'C']);
+  assert.deepEqual(getChordNotes('I', true, 'C', 3), ['C', 'E', 'G', 'B']);
+  assert.deepEqual(getChordNotes('V', true, 'C', 4), ['G', 'B', 'D', 'F']);
+  assert.deepEqual(getChordNotes(null, true, 'C', 1), []);
+});
+
+test('formatNoteName uses typographic accidentals only after note letters', () => {
+  assert.equal(formatNoteName('F#m7'), 'F\u266Fm7');
+  assert.equal(formatNoteName('Bb/D'), 'B\u266D/D');
+  assert.equal(formatNoteName('Bdim7'), 'Bdim7');
 });

@@ -1,71 +1,52 @@
+import { ChordDegree } from './music-theory';
+
+/** One step of the guided practice ("Esercitazione"). The app checks it live. */
 export interface TutorialStep {
-  step: number;
-  totalSteps: number;
   title: string;
   description: string;
-  leftHandGoal: string; // e.g. "1️⃣ ↗️"
-  rightHandGoal?: string; // e.g. "2️⃣"
-  targetDegree: string; // "I", "IV", etc.
+  targetDegree: ChordDegree;
   targetMajor: boolean;
-  targetVoicing?: number; // 1, 2, 3, 4
-  targetVoicings?: number[]; // alternative accepted voicings (overrides targetVoicing)
+  /** Accepted right-hand voicings; omitted = any voicing */
+  targetVoicings?: number[];
   theory: string;
 }
 
 export const TUTORIAL_STEPS: TutorialStep[] = [
   {
-    step: 1,
-    totalSteps: 5,
-    title: 'Play your first chord (I Major)',
-    description: 'Raise 1 finger (index) on your Left Hand and tilt your hand slightly right (↗️).',
-    leftHandGoal: '1️⃣ ↗️ (Index finger, tilt right)',
+    title: 'Il primo accordo',
+    description: 'Mano sinistra: alza solo l’indice e inclina leggermente la mano verso destra.',
     targetDegree: 'I',
     targetMajor: true,
-    theory: 'Degree I is the tonic (home) chord. 1 finger selects the 1st scale degree.',
+    theory: 'Il I grado è la tonica, l’accordo “di casa”. L’inclinazione a destra lo rende maggiore.',
   },
   {
-    step: 2,
-    totalSteps: 5,
-    title: 'Tilt for Minor (I minor)',
-    description: 'Keep your 1 finger extended on your Left Hand, but tilt your hand left (↖️).',
-    leftHandGoal: '1️⃣ ↖️ (Tilt left)',
+    title: 'Da maggiore a minore',
+    description: 'Tieni l’indice alzato e inclina la mano verso sinistra.',
     targetDegree: 'I',
     targetMajor: false,
-    theory: 'Tilting left drops the 3rd by one semitone, instantly creating an emotive minor chord.',
+    theory: 'Inclinando a sinistra la terza scende di un semitono: l’accordo diventa minore.',
   },
   {
-    step: 3,
-    totalSteps: 5,
-    title: 'Change degrees (IV Major)',
-    description: 'Now raise 4 fingers on your Left Hand and tilt right (↗️).',
-    leftHandGoal: '4️⃣ ↗️ (4 fingers, tilt right)',
+    title: 'Cambia grado',
+    description: 'Alza quattro dita (pollice chiuso) e inclina a destra.',
     targetDegree: 'IV',
     targetMajor: true,
-    theory: 'Raising 4 fingers triggers the IV chord (Subdominant), creating musical movement.',
+    theory: 'Il IV grado (sottodominante) crea movimento rispetto alla tonica.',
   },
   {
-    step: 4,
-    totalSteps: 5,
-    title: 'Add Right Hand: Inversions',
-    description: 'Left Hand on 1️⃣ ↗️ (Root chord). Now raise 2 fingers on your Right Hand.',
-    leftHandGoal: '1️⃣ ↗️',
-    rightHandGoal: '2️⃣ (1st Inversion)',
+    title: 'Aggiungi la mano destra',
+    description: 'Sinistra: indice alzato, inclinata a destra. Destra: alza due dita.',
     targetDegree: 'I',
     targetMajor: true,
-    targetVoicing: 2,
-    theory: 'Right hand controls chord voicings. 2 fingers plays the 1st inversion (3rd in the bass).',
+    targetVoicings: [2],
+    theory: 'La mano destra sceglie il voicing: con due dita la terza va al basso (primo rivolto).',
   },
   {
-    step: 5,
-    totalSteps: 5,
-    title: 'Lush 7th Chords',
-    description: 'Keep Left Hand on 1️⃣ ↗️. Raise 3 fingers on your Right Hand for Maj 7, or 4 fingers for Dom 7!',
-    leftHandGoal: '1️⃣ ↗️',
-    rightHandGoal: '3️⃣ (Maj 7) or 4️⃣ (Dom 7)',
+    title: 'Accordi di settima',
+    description: 'Sinistra come prima. Destra: tre dita per la Maj7 oppure quattro per la settima di dominante.',
     targetDegree: 'I',
     targetMajor: true,
-    targetVoicing: 3,
     targetVoicings: [3, 4],
-    theory: 'Extensions give chords colorful richness used in jazz, neo-soul, lo-fi, and cinema.',
+    theory: 'Le settime danno il colore tipico di jazz, soul e lo-fi.',
   },
 ];

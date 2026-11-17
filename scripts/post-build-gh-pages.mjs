@@ -32,6 +32,17 @@ if (!wasmFiles.some((f) => f.endsWith('.wasm'))) {
 }
 console.log(`✓ MediaPipe WASM runtime present (${wasmFiles.length} files)`);
 
+// 3b. Installable app (PWA): manifest, icons and service worker must be shipped
+for (const file of ['manifest.webmanifest', 'ngsw.json', 'ngsw-worker.js', 'icons/icon-192.png', 'icons/icon-512.png']) {
+  if (!fs.existsSync(path.join(distBrowserDir, file))) {
+    fail(`PWA file missing: ${file}`);
+  }
+}
+if (!indexHtml.includes('manifest.webmanifest')) {
+  fail('index.html does not link the web app manifest.');
+}
+console.log('✓ PWA manifest, icons and service worker present');
+
 // 4. Create .nojekyll so GitHub Pages does not ignore underscore files or run Jekyll
 fs.writeFileSync(path.join(distBrowserDir, '.nojekyll'), '');
 console.log('✓ Created .nojekyll');
